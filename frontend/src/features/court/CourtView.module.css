@@ -1,0 +1,169 @@
+/* SVG units are meters; stroke widths below are in meters too. */
+
+.court {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  font-family: var(--font-sans);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+}
+
+.surround {
+  fill: var(--court-surround);
+}
+
+.surface {
+  fill: var(--court-surface);
+}
+
+.line {
+  stroke: var(--court-line);
+  stroke-linecap: square;
+}
+
+.net {
+  stroke: var(--court-net);
+  stroke-width: 0.07;
+}
+
+.netShadow {
+  stroke: rgb(0 0 0 / 0.25);
+  stroke-width: 0.09;
+}
+
+.post {
+  fill: var(--court-net);
+}
+
+.sideLabel,
+.netLabel {
+  font-size: 0.3px;
+  font-weight: 700;
+  letter-spacing: 0.04px;
+}
+
+.netLabel {
+  fill: rgb(255 255 255 / 0.55);
+}
+
+.playerAText {
+  fill: var(--player-a);
+}
+
+.playerBText {
+  fill: var(--player-b);
+}
+
+/* ---------- Trajectory ---------- */
+
+.pathFaint,
+.pathActive {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pathFaint {
+  stroke: var(--trajectory-faint);
+  stroke-width: 0.04;
+  stroke-dasharray: 0.12 0.1;
+}
+
+.pathActive {
+  stroke: var(--trajectory);
+  stroke-width: 0.065;
+  filter: drop-shadow(0 0 0.06px rgb(0 0 0 / 0.6));
+}
+
+.landing circle {
+  fill: rgb(255 255 255 / 0.12);
+  stroke: var(--trajectory);
+  stroke-width: 0.04;
+}
+
+.landing path {
+  stroke: var(--trajectory);
+  stroke-width: 0.04;
+  stroke-linecap: round;
+}
+
+/* ---------- Shot markers ---------- */
+
+.shotMarker circle {
+  stroke: rgb(0 0 0 / 0.45);
+  stroke-width: 0.03;
+  opacity: 0.7;
+}
+
+.shotMarker text {
+  fill: #13120f;
+  font-size: 0.18px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.shotMarker[data-active] circle {
+  stroke: #fff;
+  stroke-width: 0.05;
+  opacity: 1;
+}
+
+.shotMarker.playerA circle {
+  fill: var(--player-a);
+}
+
+.shotMarker.playerB circle {
+  fill: var(--player-b);
+}
+
+/* ---------- Players ---------- */
+
+.playerHalo {
+  opacity: 0.22;
+}
+
+.playerBody {
+  stroke: #13120f;
+  stroke-width: 0.05;
+}
+
+.player text {
+  fill: #13120f;
+  font-size: 0.32px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.player.playerA .playerHalo,
+.player.playerA .playerBody {
+  fill: var(--player-a);
+}
+
+.player.playerB .playerHalo,
+.player.playerB .playerBody {
+  fill: var(--player-b);
+}
+
+/* ---------- Shuttle ---------- */
+
+.shuttleGlow {
+  fill: var(--shuttle);
+  opacity: 0.25;
+}
+
+.shuttleBody {
+  fill: var(--shuttle);
+  stroke: #13120f;
+  stroke-width: 0.025;
+}
+
+.trail {
+  fill: none;
+  stroke: var(--shuttle);
+  stroke-width: 0.09;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.45;
+}

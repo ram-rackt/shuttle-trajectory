@@ -1,0 +1,47 @@
+[project]
+name = "rallyreview-backend"
+version = "0.1.0"
+description = "RallyReview API and computer-vision pipeline for badminton rally analysis."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "numpy>=2.0",
+    "opencv-python>=4.10",
+]
+
+[project.optional-dependencies]
+cv = [
+    # Person detection (YOLO) and TrackNet shuttle detection; pulls in PyTorch.
+    "ultralytics>=8.3",
+    "torch>=2.4",
+]
+
+dev = [
+    "pytest>=8",
+    "httpx2>=2.13",
+    "ruff>=0.6",
+    "psutil>=5.9",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "rallycv*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: runs models on real video (needs weights and data/samples; `make test-cv`)",
+]
+addopts = "-m 'not slow'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

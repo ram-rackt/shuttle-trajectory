@@ -1,0 +1,213 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.text {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* ---------- Header navigation ---------- */
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.navLabel {
+  min-width: 82px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* ---------- Track ---------- */
+
+.trackRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.time {
+  min-width: 34px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.track {
+  position: relative;
+  flex: 1;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.track[aria-disabled='true'] {
+  cursor: default;
+}
+
+.track:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.progress {
+  position: absolute;
+  inset: auto auto 0 0;
+  height: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.shotBlock {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  border-left: 2px solid;
+  border-radius: 0 3px 3px 0;
+  opacity: 0.4;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.shotBlock[data-hitter='A'] {
+  border-color: var(--player-a);
+  background: color-mix(in srgb, var(--player-a) 35%, transparent);
+}
+
+.shotBlock[data-hitter='B'] {
+  border-color: var(--player-b);
+  background: color-mix(in srgb, var(--player-b) 35%, transparent);
+}
+
+.shotBlock[data-active] {
+  opacity: 1;
+}
+
+.playhead {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+
+.playhead::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translateX(-50%);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+}
+
+/* ---------- Shot list ---------- */
+
+.shotList {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 2px 2px var(--space-1);
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.shotChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-2) 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.shotChip:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.shotChip[aria-current='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.shotChip:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.chipNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.chipHitter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #13120f;
+  font-size: 0.6875rem;
+  font-weight: 800;
+}
+
+.shotChip[data-hitter='A'] .chipHitter {
+  background: var(--player-a);
+}
+
+.shotChip[data-hitter='B'] .chipHitter {
+  background: var(--player-b);
+}
+
+@media (max-width: 639px) {
+  .body {
+    padding: var(--space-3);
+  }
+
+  .trackRow .time {
+    display: none;
+  }
+}

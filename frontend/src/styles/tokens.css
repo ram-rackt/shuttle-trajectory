@@ -1,0 +1,87 @@
+/*
+ * Design tokens. Dark charcoal surfaces with a green accent.
+ * Components reference these variables only; no raw colors in component CSS.
+ */
+:root {
+  /* Surfaces, darkest to lightest */
+  --surface-sidebar: #1c1b19;
+  --surface-app: #262522;
+  --surface-panel: #2f2d2a;
+  --surface-raised: #3a3835;
+  --surface-hover: #44423e;
+  --surface-inset: #1a1917;
+
+  /* Borders */
+  --border-subtle: rgb(255 255 255 / 0.06);
+  --border-default: rgb(255 255 255 / 0.1);
+  --border-strong: rgb(255 255 255 / 0.16);
+
+  /* Text */
+  --text-primary: #ecebe8;
+  --text-secondary: #b3b0aa;
+  --text-muted: #85827c;
+  --text-on-accent: #ffffff;
+
+  /* Accent (green) */
+  --accent: #81b64c;
+  --accent-hover: #95c95c;
+  --accent-pressed: #6f9f3f;
+  --accent-edge: #537f2e;
+  --accent-soft: rgb(129 182 76 / 0.14);
+  --accent-text: #a3d16e;
+
+  /* Status */
+  --status-ok: #81b64c;
+  --status-warn: #e0a23a;
+  --status-error: #e2574c;
+  --status-idle: #85827c;
+  --status-error-text: #f0a39c;
+
+  /* Court visualization */
+  --court-surround: #2d4a28;
+  --court-surface: #3f6e36;
+  --court-line: rgb(255 255 255 / 0.9);
+  --court-net: #e9e7e2;
+  --player-a: #5ab0f0;
+  --player-b: #f2a541;
+  --shuttle: #ffffff;
+  --trajectory: rgb(255 255 255 / 0.9);
+  --trajectory-faint: rgb(255 255 255 / 0.22);
+
+  /* Typography */
+  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+
+  /* Spacing (4px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Shape and depth */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px rgb(0 0 0 / 0.25);
+  --focus-ring: 0 0 0 2px var(--surface-app), 0 0 0 4px var(--accent);
+
+  /* Layout */
+  --sidebar-width: 216px;
+  --sidebar-width-collapsed: 64px;
+  --header-height: 60px;
+  --mobile-nav-height: 60px;
+
+  --transition-fast: 120ms ease;
+
+  color-scheme: dark;
+}

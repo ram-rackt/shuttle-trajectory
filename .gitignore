@@ -1,0 +1,31 @@
+# OS / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Backend
+backend/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local data: uploaded videos and analysis outputs must never be committed
+data/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Env
+.env
+.env.*
+!.env.example

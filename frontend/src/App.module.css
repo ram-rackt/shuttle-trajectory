@@ -1,0 +1,24 @@
+.workspace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+@media (max-width: 899px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 639px) {
+  .workspace {
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+
+  /* Icon-only upload button in the header on phones. */
+  .uploadLabel {
+    display: none;
+  }
+}

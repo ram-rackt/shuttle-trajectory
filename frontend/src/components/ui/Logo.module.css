@@ -1,0 +1,9 @@
+.mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent-edge);
+  color: #fff;
+}
