@@ -13,8 +13,9 @@ dependencies = [
 
 [project.optional-dependencies]
 cv = [
-    # Person detection (YOLO) and TrackNet shuttle detection; pulls in PyTorch.
-    "ultralytics>=8.3",
+    # Person detection (RT-DETRv2) and TrackNet shuttle detection; pulls in PyTorch.
+    "transformers>=4.42",
+    "Pillow>=10.0",
     "torch>=2.4",
 ]
 

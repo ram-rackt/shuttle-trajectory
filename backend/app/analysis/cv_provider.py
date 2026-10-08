@@ -38,9 +38,9 @@ class CVAnalysisProvider:
 
     def _person_detector(self):  # noqa: ANN202 - lazy heavy import
         if self._detector is None:
-            from rallycv.players import YoloPersonDetector
+            from rallycv.players import RtDetrPersonDetector
 
-            self._detector = YoloPersonDetector(self._models_dir / "yolo11n.pt")
+            self._detector = RtDetrPersonDetector(model_id="PekingU/rtdetr_v2_r18vd")
         return self._detector
 
     def analyze(self, request: AnalysisRequest, on_progress: ProgressCallback) -> RallyAnalysis:

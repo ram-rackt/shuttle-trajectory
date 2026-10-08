@@ -50,7 +50,6 @@ function App() {
       header={
         <Header
           title={title}
-          subtitle={subtitle}
           center={<ReviewSteps current={reviewStepFor(analysis.state)} />}
           actions={
             <Button
@@ -93,12 +92,12 @@ function App() {
           marking={
             marking
               ? {
-                  onSubmit: (corners) => {
-                    setMarkingFor(null)
-                    analysis.calibrate(corners)
-                  },
-                  onCancel: () => setMarkingFor(null),
-                }
+                onSubmit: (corners) => {
+                  setMarkingFor(null)
+                  analysis.calibrate(corners)
+                },
+                onCancel: () => setMarkingFor(null),
+              }
               : null
           }
         />

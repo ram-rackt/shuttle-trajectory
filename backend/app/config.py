@@ -22,9 +22,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        analyzer = os.environ.get("RALLYREVIEW_ANALYZER", "cv").lower()
-        if analyzer not in ("cv", "mock"):
-            raise ValueError("RALLYREVIEW_ANALYZER must be 'cv' or 'mock'.")
+        analyzer = "cv"  # Forced to CV to prevent mock data from env variable
         return cls(
             data_dir=Path(os.environ.get("RALLYREVIEW_DATA_DIR", BACKEND_ROOT / "data")),
             max_upload_bytes=int(os.environ.get("RALLYREVIEW_MAX_UPLOAD_BYTES", 2 * 1024**3)),

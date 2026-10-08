@@ -20,11 +20,11 @@ def result():
     if not SAMPLE.exists() or not (MODELS / "ckpts" / "TrackNet_best.pt").exists():
         pytest.skip("sample clip or model weights not available")
     from rallycv import pipeline
-    from rallycv.players import YoloPersonDetector
+    from rallycv.players import RtDetrPersonDetector
 
     return pipeline.run(
         SAMPLE,
-        YoloPersonDetector(MODELS / "yolo11n.pt"),
+        RtDetrPersonDetector(model_id="PekingU/rtdetr_v2_r18vd"),
         config=pipeline.PipelineConfig(tracknet_weights=MODELS / "ckpts" / "TrackNet_best.pt"),
     )
 
@@ -61,11 +61,11 @@ def test_clean_single_rally_clip() -> None:
     if not CLEAN.exists() or not (MODELS / "ckpts" / "TrackNet_best.pt").exists():
         pytest.skip("rally_clean.mp4 or model weights not available")
     from rallycv import pipeline
-    from rallycv.players import YoloPersonDetector
+    from rallycv.players import RtDetrPersonDetector
 
     res = pipeline.run(
         CLEAN,
-        YoloPersonDetector(MODELS / "yolo11n.pt"),
+        RtDetrPersonDetector(model_id="PekingU/rtdetr_v2_r18vd"),
         config=pipeline.PipelineConfig(tracknet_weights=MODELS / "ckpts" / "TrackNet_best.pt"),
     )
     assert res.stats["rallies"] == 1

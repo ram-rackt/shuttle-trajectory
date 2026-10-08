@@ -33,32 +33,59 @@ class PersonDetector(Protocol):
         ...
 
 
-class YoloPersonDetector:
-    """Ultralytics YOLO person detector. Weights download on first use."""
+class RtDetrPersonDetector:
+    """RT-DETRv2 person detector via Hugging Face Transformers."""
 
-    def __init__(self, weights: Path, device: str | None = None, conf: float = 0.25) -> None:
-        from ultralytics import YOLO  # heavy import, keep lazy
+    def __init__(self, model_id: str, device: str | None = None, conf: float = 0.25) -> None:
+        from transformers import RTDetrV2ForObjectDetection, RTDetrImageProcessor
+        import torch
 
-        weights.parent.mkdir(parents=True, exist_ok=True)
-        self._model = YOLO(str(weights))
         self._device = device or _best_device()
         self._conf = conf
+        
+        self._processor = RTDetrImageProcessor.from_pretrained(model_id)
+        self._model = RTDetrV2ForObjectDetection.from_pretrained(model_id).to(self._device)
+        self._model.eval()
 
     def detect(self, frame_bgr: np.ndarray) -> np.ndarray:
-        result = self._model.predict(
-            frame_bgr,
-            classes=[0],
-            conf=self._conf,
-            imgsz=960,
-            device=self._device,
-            verbose=False,
+        import torch
+        import cv2
+        from PIL import Image
+
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(frame_rgb)
+
+        inputs = self._processor(images=image, return_tensors="pt").to(self._device)
+
+        with torch.no_grad():
+            outputs = self._model(**inputs)
+
+        target_sizes = torch.tensor([(image.height, image.width)]).to(self._device)
+        results = self._processor.post_process_object_detection(
+            outputs, target_sizes=target_sizes, threshold=self._conf
         )[0]
-        boxes = result.boxes
-        if boxes is None or len(boxes) == 0:
+
+        scores = results["scores"].cpu().numpy()
+        labels = results["labels"].cpu().numpy()
+        boxes = results["boxes"].cpu().numpy()
+
+        person_id = None
+        for k, v in self._model.config.id2label.items():
+            if v.lower() == 'person':
+                person_id = k
+                break
+        
+        if person_id is None:
+            person_id = 1  # Fallback to COCO 'person' label (usually 1, sometimes 0)
+
+        mask = labels == person_id
+        if not np.any(mask):
             return np.zeros((0, 5))
-        xyxy = boxes.xyxy.cpu().numpy()
-        conf = boxes.conf.cpu().numpy()[:, None]
-        return np.hstack([xyxy, conf])
+
+        person_boxes = boxes[mask]
+        person_scores = scores[mask][:, None]
+        
+        return np.hstack([person_boxes, person_scores])
 
 
 def _best_device() -> str:

@@ -1,6 +1,6 @@
 """Downloads the model weights used by the CV pipeline into backend/data/models.
 
-- YOLO11n (person detection), from the Ultralytics release assets (AGPL-3.0).
+- RT-DETRv2-S (person detection), via Hugging Face transformers.
 - TrackNetV3 (shuttle detection), from the authors' release (MIT).
 
 Usage: python scripts/download_models.py
@@ -13,7 +13,6 @@ import zipfile
 from pathlib import Path
 
 MODELS = Path(__file__).resolve().parent.parent / "data" / "models"
-YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt"
 TRACKNET_URL = (
     "https://drive.usercontent.google.com/download"
     "?id=1CfzE87a0f6LhBp0kniSl1-89zaLCZ8cA&export=download&confirm=t"
@@ -30,9 +29,13 @@ def fetch(url: str, dest: Path) -> None:
 
 def main() -> int:
     MODELS.mkdir(parents=True, exist_ok=True)
-    yolo = MODELS / "yolo11n.pt"
-    if not yolo.exists():
-        fetch(YOLO_URL, yolo)
+    try:
+        from transformers import RTDetrV2ForObjectDetection, RTDetrImageProcessor
+        print("Caching RT-DETRv2 weights...")
+        RTDetrImageProcessor.from_pretrained("PekingU/rtdetr_v2_r18vd")
+        RTDetrV2ForObjectDetection.from_pretrained("PekingU/rtdetr_v2_r18vd")
+    except ImportError:
+        pass
     tracknet = MODELS / "ckpts" / "TrackNet_best.pt"
     if not tracknet.exists():
         archive = MODELS / "TrackNetV3_ckpts.zip"
