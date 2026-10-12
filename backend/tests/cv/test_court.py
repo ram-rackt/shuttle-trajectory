@@ -62,3 +62,12 @@ def test_manual_corners_must_be_a_convex_quad() -> None:
     bowtie = np.array([[100, 900], [1800, 100], [1800, 900], [100, 100]], dtype=float)
     with pytest.raises(ValueError):
         calibration_from_corners(bowtie, (1920, 1080))
+
+
+def test_person_class_is_looked_up_by_name() -> None:
+    from rallycv.players import person_label_id
+
+    assert person_label_id({0: "person", 1: "bicycle"}) == 0
+    assert person_label_id({0: "background", 1: "Person"}) == 1
+    with pytest.raises(ValueError, match="no 'person' class"):
+        person_label_id({0: "cat", 1: "dog"})

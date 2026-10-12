@@ -25,8 +25,10 @@ logger = logging.getLogger(__name__)
 class CVAnalysisProvider:
     """Real analysis: court detection, player and shuttle tracking, shot detection."""
 
-    def __init__(self, models_dir: Path) -> None:
+    def __init__(self, models_dir: Path, person_model: str, device: str | None = None) -> None:
         self._models_dir = models_dir
+        self._person_model = person_model
+        self._device = device
         self._detector = None
         self._lock = threading.Lock()  # one analysis at a time: models are not thread-safe
 
@@ -40,14 +42,17 @@ class CVAnalysisProvider:
         if self._detector is None:
             from rallycv.players import RtDetrPersonDetector
 
-            self._detector = RtDetrPersonDetector(model_id="PekingU/rtdetr_v2_r18vd")
+            self._detector = RtDetrPersonDetector(
+                self._person_model, device=self._device, cache_dir=self._models_dir / "hf"
+            )
         return self._detector
 
     def analyze(self, request: AnalysisRequest, on_progress: ProgressCallback) -> RallyAnalysis:
         from rallycv import pipeline
 
         config = pipeline.PipelineConfig(
-            tracknet_weights=self._models_dir / "ckpts" / "TrackNet_best.pt"
+            tracknet_weights=self._models_dir / "ckpts" / "TrackNet_best.pt",
+            device=self._device,
         )
         with self._lock:
             try:

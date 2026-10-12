@@ -64,7 +64,8 @@ directly from `video.currentTime`.
   shuttle; the UI must handle gaps instead of the producer inventing positions.
 - Samples need not be at a fixed rate. The UI interpolates between samples.
 - Doubles (four players) would extend `PlayerId`; not in scope for v1.
-- A clip may contain several rallies: each starts with a `serve` shot, and
+- A clip may contain several rallies: each seen from its start begins with a
+  `serve` shot (a rally already in progress when the clip starts has none), and
   there are no shots during dead time between them.
 - For CV output, floor positions mid-flight are estimates (a single camera
   can't measure height); `image` is what was actually detected.

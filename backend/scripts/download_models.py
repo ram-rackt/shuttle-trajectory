@@ -1,18 +1,21 @@
-"""Downloads the model weights used by the CV pipeline into backend/data/models.
+"""Downloads the model weights used by the CV pipeline into the models directory
+(RALLYREVIEW_MODELS_DIR, default backend/data/models).
 
-- RT-DETRv2-S (person detection), via Hugging Face transformers.
+- RT-DETRv2 (person detection, RALLYREVIEW_PERSON_MODEL), cached under <models>/hf.
 - TrackNetV3 (shuttle detection), from the authors' release (MIT).
 
 Usage: python scripts/download_models.py
 """
 
+import os
 import shutil
 import sys
 import urllib.request
 import zipfile
 from pathlib import Path
 
-MODELS = Path(__file__).resolve().parent.parent / "data" / "models"
+BACKEND = Path(__file__).resolve().parent.parent
+MODELS = Path(os.environ.get("RALLYREVIEW_MODELS_DIR", BACKEND / "data" / "models"))
 TRACKNET_URL = (
     "https://drive.usercontent.google.com/download"
     "?id=1CfzE87a0f6LhBp0kniSl1-89zaLCZ8cA&export=download&confirm=t"
@@ -29,13 +32,18 @@ def fetch(url: str, dest: Path) -> None:
 
 def main() -> int:
     MODELS.mkdir(parents=True, exist_ok=True)
+    sys.path.insert(0, str(BACKEND))
+    from app.config import DEFAULT_PERSON_MODEL
+
+    person_model = os.environ.get("RALLYREVIEW_PERSON_MODEL", DEFAULT_PERSON_MODEL)
     try:
-        from transformers import RTDetrV2ForObjectDetection, RTDetrImageProcessor
-        print("Caching RT-DETRv2 weights...")
-        RTDetrImageProcessor.from_pretrained("PekingU/rtdetr_v2_r18vd")
-        RTDetrV2ForObjectDetection.from_pretrained("PekingU/rtdetr_v2_r18vd")
+        from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
     except ImportError:
-        pass
+        print("transformers is not installed; skipping RT-DETRv2 (pip install -e 'backend[cv]').")
+    else:
+        print(f"Caching {person_model} ...", flush=True)
+        RTDetrImageProcessor.from_pretrained(person_model, cache_dir=MODELS / "hf")
+        RTDetrV2ForObjectDetection.from_pretrained(person_model, cache_dir=MODELS / "hf")
     tracknet = MODELS / "ckpts" / "TrackNet_best.pt"
     if not tracknet.exists():
         archive = MODELS / "TrackNetV3_ckpts.zip"

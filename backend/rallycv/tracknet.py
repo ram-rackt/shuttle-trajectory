@@ -13,6 +13,7 @@ frame; the shuttle is the centroid of the largest region above 0.5.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 HEIGHT, WIDTH = 288, 512
 SEQ_LEN = 8
 HEATMAP_THRESHOLD = 0.5
+MAX_JUMP_PX = 120.0
+"""Between consecutive distinct frames at 1080p, a jump larger than this means
+one of the detections is on something other than the shuttle."""
 
 
 def _build_model(in_dim: int, out_dim: int):  # noqa: ANN202 - torch types are lazy
@@ -94,19 +98,38 @@ class Detection:
     confidence: float  # peak heatmap value
 
 
+Overlap = Literal["full", "adaptive", "none"]
+
+
 class TrackNetDetector:
     """Runs TrackNet over a stream of frames (distinct frames only).
 
-    Windows of 8 frames overlap by half; each frame's heatmap is the average
-    of the two windows that contain it, which smooths window-edge errors.
+    The network sees 8 frames at a time. Frames are processed in consecutive
+    8-frame windows; an extra window straddling each boundary (the last 4
+    frames of one window and the first 4 of the next) can be run too, and each
+    frame's heatmap is then the average of the two windows that saw it. That
+    averaging recovers the shuttle in frames where one pass misses it, which
+    are typically the motion-blurred frames right at a hit.
+
+    `overlap` chooses when the straddling window runs:
+      - "full": always (every frame processed twice; the original TrackNet scheme)
+      - "adaptive": only where the first pass looks unreliable: a frame with
+        no shuttle, or a detection that jumps implausibly far from the frame
+        before it (locked onto a racket or shirt). Roughly half the windows
+      - "none": never (fastest; misses some detections at hits)
     """
 
     def __init__(
-        self, weights: Path, background_bgr: np.ndarray, device: str | None = None
+        self,
+        weights: Path,
+        background_bgr: np.ndarray,
+        device: str | None = None,
+        overlap: Overlap = "adaptive",
     ) -> None:
         import torch
 
         self._torch = torch
+        self._overlap = overlap
         self._device = torch.device(device or _best_device())
         ckpt = torch.load(weights, map_location="cpu", weights_only=False)
         params = ckpt.get("param_dict", {})
@@ -116,15 +139,18 @@ class TrackNetDetector:
             )
         model = _build_model((SEQ_LEN + 1) * 3, SEQ_LEN)
         model.load_state_dict(ckpt["model"])
-        self._model = model.to(self._device).eval()
+        self._model = model.to(self._device, memory_format=torch.channels_last).eval()
 
         h, w = background_bgr.shape[:2]
         self._scale = (w / WIDTH, h / HEIGHT)
         self._background = self._prep(background_bgr)
-        self._frames: list[np.ndarray] = []
-        self._indices: list[int] = []
-        self._pending: dict[int, list[np.ndarray]] = {}
+        self._new: list[tuple[int, np.ndarray]] = []
+        """Frames waiting for their window."""
+        self._tail: list[tuple[int, np.ndarray]] = []
+        """Last half of the previous window, for the straddling window."""
+        self._heats: dict[int, list[np.ndarray]] = {}
         self.detections: dict[int, Detection] = {}
+        self.windows_run = 0
 
     @staticmethod
     def _prep(frame_bgr: np.ndarray) -> np.ndarray:
@@ -134,41 +160,72 @@ class TrackNetDetector:
         return np.moveaxis(rgb, -1, 0).astype(np.float32) / 255.0
 
     def push(self, frame_index: int, frame_bgr: np.ndarray) -> None:
-        self._frames.append(self._prep(frame_bgr))
-        self._indices.append(frame_index)
-        if len(self._frames) == SEQ_LEN:
-            self._run_window()
-            half = SEQ_LEN // 2
-            self._frames = self._frames[half:]
-            self._indices = self._indices[half:]
+        self._new.append((frame_index, self._prep(frame_bgr)))
+        if len(self._new) == SEQ_LEN:
+            self._step(self._new)
+            self._new = []
 
     def flush(self) -> None:
-        """Processes the remaining frames (padding the last window)."""
-        if self._frames:
-            n = len(self._frames)
-            while len(self._frames) < SEQ_LEN:
-                self._frames.append(self._frames[-1])
-                self._indices.append(self._indices[-1])
-            self._run_window(valid=n)
-            self._frames, self._indices = [], []
-        for idx, maps in list(self._pending.items()):
-            self._finalise(idx, maps)
-        self._pending.clear()
+        """Processes the remaining frames (padding the last window) and finalises."""
+        if self._new:
+            self._step(self._new)
+            self._new = []
+        for idx in [i for i, _ in self._tail]:
+            self._finalise_frame(idx)
+        self._tail = []
+        for idx in list(self._heats):
+            self._finalise_frame(idx)
 
-    def _run_window(self, valid: int = SEQ_LEN) -> None:
-        torch = self._torch
-        x = np.concatenate([self._background, *self._frames], axis=0)[None]
-        with torch.no_grad():
-            heat = self._model(torch.from_numpy(x).to(self._device)).cpu().numpy()[0]
-        for k in range(valid):
-            idx = self._indices[k]
-            self._pending.setdefault(idx, []).append(heat[k])
-        # Frames that can't appear in any later window are complete.
+    def _step(self, window: list[tuple[int, np.ndarray]]) -> None:
+        """Runs one window of new frames, then the straddling window if wanted,
+        and finalises the frames no later window can see."""
+        self._run(window)
         half = SEQ_LEN // 2
-        done = self._indices[:half] if valid == SEQ_LEN else self._indices[:valid]
-        for idx in done:
-            if idx in self._pending:
-                self._finalise(idx, self._pending.pop(idx))
+        head = window[:half]
+        straddle = self._tail + head
+        if self._tail and self._wants_straddle(straddle):
+            self._run(straddle)
+        for idx, _ in self._tail + head:
+            self._finalise_frame(idx)
+        self._tail = window[half:]
+
+    def _wants_straddle(self, frames: list[tuple[int, np.ndarray]]) -> bool:
+        if self._overlap == "full":
+            return True
+        if self._overlap == "none":
+            return False
+        image_width = WIDTH * self._scale[0]
+        max_jump = MAX_JUMP_PX * image_width / 1920
+        prev: np.ndarray | None = None
+        for idx, _ in frames:
+            heat = self._heats[idx][0]
+            if float(heat.max()) < HEATMAP_THRESHOLD:
+                return True  # no shuttle in the first pass
+            y, x = np.unravel_index(int(np.argmax(heat)), heat.shape)
+            pos = np.array([x * self._scale[0], y * self._scale[1]])
+            if prev is not None and np.hypot(*(pos - prev)) > max_jump:
+                return True  # implausible jump: one of these is not the shuttle
+            prev = pos
+        return False
+
+    def _run(self, frames: list[tuple[int, np.ndarray]]) -> None:
+        """One network pass. Short windows are padded by repeating the last
+        frame; only real frames receive a heatmap."""
+        torch = self._torch
+        arrays = [a for _, a in frames]
+        arrays += [arrays[-1]] * (SEQ_LEN - len(arrays))
+        x = np.concatenate([self._background, *arrays], axis=0)[None]
+        with torch.inference_mode():
+            inp = torch.from_numpy(x).to(self._device, memory_format=torch.channels_last)
+            heat = self._model(inp).cpu().numpy()[0]
+        self.windows_run += 1
+        for k, (idx, _) in enumerate(frames):
+            self._heats.setdefault(idx, []).append(heat[k])
+
+    def _finalise_frame(self, idx: int) -> None:
+        maps = self._heats.pop(idx, None)
+        if maps:
+            self._finalise(idx, maps)
 
     def _finalise(self, idx: int, maps: list[np.ndarray]) -> None:
         heat = np.mean(maps, axis=0)

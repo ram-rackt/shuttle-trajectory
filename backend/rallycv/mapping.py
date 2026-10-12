@@ -17,7 +17,7 @@ from . import court_model as cm
 from .camera import Camera, intersect_vertical_plane
 from .court import CourtCalibration
 from .players import PlayerTracks
-from .shots import Rally
+from .shots import Rally, ShotFeatures
 from .shuttle import ShuttleTrack
 
 MIN_CONDITIONING = 0.12
@@ -35,6 +35,7 @@ class ShotFlight:
     start: np.ndarray  # floor XY, metres
     end: np.ndarray
     apex_height: float | None
+    features: ShotFeatures
 
 
 @dataclass
@@ -55,13 +56,14 @@ def map_rallies(
     players: PlayerTracks,
     calibration: CourtCalibration,
     camera: Camera | None,
+    fps: float,
 ) -> CourtTrajectory:
     n_frames = len(track.xy)
     ground = np.full((n_frames, 2), np.nan)
     height = np.full(n_frames, np.nan)
     flights: list[ShotFlight] = []
     for rally in rallies:
-        _map_one(rally, track, players, calibration, camera, ground, height, flights)
+        _map_one(rally, track, players, calibration, camera, fps, ground, height, flights)
 
     covered = np.nonzero(~np.isnan(ground[:, 0]))[0]
     rng = np.arange(covered[0], covered[-1] + 1) if len(covered) else np.zeros(0, int)
@@ -74,6 +76,7 @@ def _map_one(
     players: PlayerTracks,
     calibration: CourtCalibration,
     camera: Camera | None,
+    fps: float,
     ground: np.ndarray,
     height: np.ndarray,
     flights: list[ShotFlight],
@@ -123,6 +126,9 @@ def _map_one(
         ground[frames] = pos
         height[frames] = z
         apex = float(np.nanmax(z)) if np.isfinite(z).any() else None
+        rise, overhead, received_high = _image_shape(
+            track, players, hit.player, receiver, f0, f1, calibration, ends_in_hit=not last
+        )
         flights.append(
             ShotFlight(
                 index_in_rally=i,
@@ -132,8 +138,59 @@ def _map_one(
                 start=p0,
                 end=p1,
                 apex_height=apex,
+                features=ShotFeatures(
+                    serve=i == 0 and rally.served,
+                    start=p0,
+                    end=p1,
+                    duration=float(f1 - f0) / fps,
+                    rise=rise,
+                    overhead=overhead,
+                    received_high=received_high,
+                ),
             )
         )
+
+
+def _image_shape(
+    track: ShuttleTrack,
+    players: PlayerTracks,
+    hitter: str,
+    receiver: str,
+    f0: float,
+    f1: float,
+    calibration: CourtCalibration,
+    *,
+    ends_in_hit: bool,
+) -> tuple[float | None, bool | None, bool | None]:
+    """How high the flight loops in the image, whether the hitter struck it
+    overhead, and whether the receiver had to take it above their head.
+
+    All come straight from the detected image track and player boxes, so they
+    don't depend on the (ambiguous) single-camera height reconstruction.
+    """
+    h = calibration.image_size[1]
+    lo, hi = int(np.floor(f0)), int(np.ceil(f1)) + 1
+    ys = track.xy[max(lo, 0) : min(hi, len(track.xy)), 1]
+    seen = np.nonzero(np.isfinite(ys))[0]
+    if len(seen) < 3:
+        return None, None, None
+    y_start, y_end = ys[seen[0]], ys[seen[-1]]
+    top = float(np.min(ys[seen]))
+    rise = (min(y_start, y_end) - top) / h
+    # A shuttle that leaves through the top of the frame looped very high.
+    if top < 0.04 * h:
+        rise = max(rise, 0.3)
+
+    near = 0.15 * (hi - lo) + 2
+    overhead = None
+    box = players.box_at(hitter, int(round(f0)), max_frame_gap=10)
+    if box is not None and seen[0] <= near:
+        overhead = bool(y_start < box[1] + 0.05 * (box[3] - box[1]))
+    received_high = None
+    box = players.box_at(receiver, int(round(f1)), max_frame_gap=10)
+    if ends_in_hit and box is not None and (hi - lo - 1) - seen[-1] <= near:
+        received_high = bool(y_end < box[1])
+    return float(rise), overhead, received_high
 
 
 def _fill_progress(u: np.ndarray, s: np.ndarray) -> np.ndarray:

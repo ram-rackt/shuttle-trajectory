@@ -12,7 +12,12 @@ from . import video
 from .camera import Camera, CameraError, camera_from_homography
 from .court import CourtCalibration, CourtNotFoundError, calibration_from_corners, detect_court
 from .mapping import CourtTrajectory, map_rallies
-from .players import PersonDetector, PlayerTracker, PlayerTracks, smooth_track
+from .players import (
+    PersonDetector,
+    PlayerTracker,
+    PlayerTracks,
+    smooth_track,
+)
 from .shots import classify_shot, detect_rallies
 from .shuttle import Candidate, ShuttleDetector, ShuttleTrack, is_repeat, track_shuttle
 
@@ -29,6 +34,11 @@ BACKGROUND_SAMPLES = 25
 OFF_VIEW_THRESHOLD = 28.0
 """Mean grey-level difference from the court background above which a frame is
 treated as a different shot (replay, close-up) and ignored."""
+CUT_RATIO = 3.5
+CUT_MIN_FRACTION = 0.015
+"""A hard cut to the same camera view (highlight reels splice rallies) changes
+far more pixels between consecutive frames than any motion in play: more
+than CUT_RATIO x the clip's median change and CUT_MIN_FRACTION of the frame."""
 
 ProgressFn = Callable[[int, float], None]
 
@@ -44,7 +54,14 @@ class PipelineError(Exception):
 class PipelineConfig:
     tracknet_weights: Path | None = None
     """TrackNetV3 checkpoint; without it the classical motion detector is used."""
-    player_detect_hz: float = 15.0
+    device: str | None = None
+    """Torch device for TrackNet; None picks the best available."""
+    player_detect_hz: float = 7.5
+    """Person detections per second of video. Boxes are interpolated between
+    detections, so this can be well below the frame rate."""
+    person_region: bool = True
+    """Run the person detector only on the part of the frame where players can
+    be (the court plus margins, up to head height), at higher resolution."""
     output_hz: float = 30.0
     player_output_hz: float = 15.0
     max_duration_sec: float = 300.0
@@ -111,11 +128,16 @@ def run(
 
     # ---- Stage 1: players + shuttle (single streaming pass) -----------------
     tracker = PlayerTracker(calibration)
+    x0, y0, x1, y1 = (
+        player_region(calibration, camera)
+        if config.person_region
+        else (0, 0, info.width, info.height)
+    )
     learned = config.tracknet_weights is not None and config.tracknet_weights.exists()
     if learned:
         from .tracknet import TrackNetDetector  # torch import is heavy; keep lazy
 
-        tracknet = TrackNetDetector(config.tracknet_weights, background)  # type: ignore[arg-type]
+        tracknet = TrackNetDetector(config.tracknet_weights, background, device=config.device)  # type: ignore[arg-type]
         classical = None
     else:
         logger.warning("TrackNet weights not found; using the classical shuttle detector.")
@@ -128,24 +150,38 @@ def run(
     last_detect_t = -np.inf
     off_view = repeated = 0
     last_report = 0
+    changes: list[tuple[int, int]] = []  # (frame, changed pixels vs previous distinct frame)
+    returned_from_off_view: list[int] = []
+    was_off_view = False
     for i, frame in video.iter_frames(video_path):
         small = cv2.cvtColor(cv2.resize(frame, (160, 90)), cv2.COLOR_BGR2GRAY).astype(np.int16)
         if float(np.abs(small - bg_small).mean()) > OFF_VIEW_THRESHOLD:
             off_view += 1  # replay / camera cut: nothing here is on our court
             boxes = []
+            was_off_view = True
             continue
+        if was_off_view:
+            returned_from_off_view.append(i)
+            was_off_view = False
         # Re-encoded footage often repeats frames (30 fps content in a 60 fps
         # file). Repeats carry no new information and confuse motion cues.
         gray = cv2.cvtColor(cv2.resize(frame, (1280, 720)), cv2.COLOR_BGR2GRAY)
         if prev_gray is not None and is_repeat(gray, prev_gray):
             repeated += 1
             continue
+        if prev_gray is not None:
+            changes.append((i, changed_pixels(gray, prev_gray)))
         prev_gray = gray
 
         t = i / info.fps
         if t - last_detect_t >= 1 / config.player_detect_hz - 1e-6:
             last_detect_t = t
-            tracker.update(i, detector.detect(frame))
+            found = detector.detect(frame[y0:y1, x0:x1])
+            if len(found):
+                found = found.copy()
+                found[:, [0, 2]] += x0
+                found[:, [1, 3]] += y0
+            tracker.update(i, found)
             boxes = [
                 obs[-1].box
                 for obs in tracker.tracks.observations.values()
@@ -181,8 +217,9 @@ def run(
     else:
         candidates = classical.candidates  # type: ignore[union-attr]
     n_frames = max(total, (max(candidates) + 2) if candidates else 0)
-    track = track_shuttle(candidates, n_frames, info.fps, info.width, learned=learned)
-    rallies = detect_rallies(track, tracker.tracks, calibration, info.fps, info.width)
+    cuts = sorted(set(find_cuts(changes)) | set(returned_from_off_view))
+    track = track_shuttle(candidates, n_frames, info.fps, info.width, learned=learned, cuts=cuts)
+    rallies = detect_rallies(track, tracker.tracks, calibration, info.fps, info.width, cuts=cuts)
     on_progress(2, 0.93)
     if not rallies:
         raise PipelineError(
@@ -192,7 +229,7 @@ def run(
         )
 
     # ---- Stage 3: court mapping ---------------------------------------------
-    traj = map_rallies(rallies, track, tracker.tracks, calibration, camera)
+    traj = map_rallies(rallies, track, tracker.tracks, calibration, camera, info.fps)
     result = _assemble(info, calibration, camera, track, tracker.tracks, traj, config)
     result.stats.update(
         {
@@ -201,11 +238,68 @@ def run(
             "repeated_frames": float(repeated),
             "off_view_frames": float(off_view),
             "rallies": float(len(rallies)),
+            "cuts": float(len(cuts)),
             "learned_shuttle_detector": float(learned),
         }
     )
     on_progress(3, 1.0)
     return result
+
+
+PLAYER_HEIGHT_M = 2.6
+"""Head-and-racket height used to bound where players appear in the image."""
+REGION_MARGIN_SIDE_M = 0.8
+REGION_MARGIN_NEAR_M = 1.0
+REGION_MARGIN_FAR_M = 1.5
+"""How far outside the court lines (m) a player's feet are looked for."""
+
+
+def player_region(
+    calibration: CourtCalibration, camera: Camera | None
+) -> tuple[int, int, int, int]:
+    """Pixel box (x0, y0, x1, y1) that contains every player on or near the court.
+
+    The court plus the margins players may stand in, from the floor up to head
+    height. Detecting on this crop instead of the whole broadcast frame skips
+    crowd and banners and gives players more pixels at the same network size.
+    """
+    w, h = calibration.image_size
+    from . import court_model as cm
+
+    xs = (-REGION_MARGIN_SIDE_M, cm.WIDTH + REGION_MARGIN_SIDE_M)
+    ys = (-REGION_MARGIN_NEAR_M, cm.LENGTH + REGION_MARGIN_FAR_M)
+    floor = np.array([(x, y) for x in xs for y in ys], dtype=np.float64)
+    pts = [calibration.to_image(floor)]
+    if camera is not None:
+        heads = np.column_stack([floor, np.full(len(floor), PLAYER_HEIGHT_M)])
+        pts.append(camera.project(heads))
+    pts_all = np.vstack(pts)
+    if not np.isfinite(pts_all).all():
+        return 0, 0, w, h
+    lo, hi = pts_all.min(axis=0), pts_all.max(axis=0)
+    if camera is None:
+        lo[1] -= 0.4 * (hi[1] - lo[1])  # no 3D camera: allow generously for heads
+    pad = 0.03 * np.array([w, h])
+    x0, y0 = np.maximum(lo - pad, 0).astype(int)
+    x1, y1 = np.minimum(hi + pad, [w, h]).astype(int)
+    if x1 - x0 < 0.2 * w or y1 - y0 < 0.2 * h:
+        return 0, 0, w, h  # implausible geometry: fall back to the whole frame
+    return int(x0), int(y0), int(x1), int(y1)
+
+
+def changed_pixels(gray: np.ndarray, prev_gray: np.ndarray) -> int:
+    """Pixels (at half the working resolution) that changed noticeably."""
+    return int((cv2.absdiff(gray[::2, ::2], prev_gray[::2, ::2]) > 25).sum())
+
+
+def find_cuts(changes: list[tuple[int, int]]) -> list[int]:
+    """Frames that start a new shot of the same camera view (hard edits)."""
+    if len(changes) < 10:
+        return []
+    counts = np.array([c for _, c in changes], dtype=np.float64)
+    pixels = (720 // 2) * (1280 // 2)
+    threshold = max(CUT_RATIO * float(np.median(counts)), CUT_MIN_FRACTION * pixels)
+    return [f for f, c in changes if c > threshold]
 
 
 def _calibrate(
@@ -242,12 +336,11 @@ def _assemble(
     fps = info.fps
     shots: list[ShotResult] = []
     for i, fl in enumerate(traj.flights):
-        duration = (fl.end_frame - fl.start_frame) / fps
         shots.append(
             ShotResult(
                 index=i,
                 hitter=fl.hitter,
-                type=classify_shot(fl.index_in_rally, fl.start, fl.end, duration, fl.apex_height),
+                type=classify_shot(fl.features),
                 start_time=fl.start_frame / fps,
                 end_time=fl.end_frame / fps,
             )

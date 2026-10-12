@@ -177,4 +177,70 @@ describe('playback sync', () => {
     expect(video.currentTime).toBe(6)
     expect(track).toHaveAttribute('aria-valuetext', expect.stringContaining('shot 3: Smash'))
   })
+
+  describe('playback speed', () => {
+    const speedSelect = () => screen.getByRole('combobox', { name: 'Playback speed' })
+
+    it('offers 0.25x to 2x and slows the video and the court together', async () => {
+      const { user, court, video } = await renderReadyRally()
+      const select = speedSelect()
+      expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
+        '0.25×',
+        '0.5×',
+        '0.75×',
+        '1×',
+        '1.5×',
+        '2×',
+      ])
+      expect(select).toHaveValue('1')
+      expect(screen.queryByTestId('rate-badge')).not.toBeInTheDocument()
+
+      await user.selectOptions(select, '0.25')
+      expect(video.playbackRate).toBe(0.25)
+      expect(video.defaultPlaybackRate).toBe(0.25) // survives the element reloading its source
+      expect(screen.getByTestId('rate-badge')).toHaveTextContent('0.25×')
+
+      // The court reads the video's clock, so it stays in step at any speed.
+      setTime(video, 3.5)
+      expect(shotSummary(court)).toHaveTextContent('TypeSmash')
+
+      await user.selectOptions(select, '1')
+      expect(video.playbackRate).toBe(1)
+      expect(screen.queryByTestId('rate-badge')).not.toBeInTheDocument()
+    })
+
+    it('steps the speed with < and >, stopping at the ends', async () => {
+      const { video } = await renderReadyRally()
+      const surface = screen.getByRole('group', { name: /Video player/ })
+      fireEvent.keyDown(surface, { key: '<' })
+      expect(video.playbackRate).toBe(0.75)
+      for (let i = 0; i < 5; i++) fireEvent.keyDown(surface, { key: '<' })
+      expect(video.playbackRate).toBe(0.25)
+      expect(speedSelect()).toHaveValue('0.25')
+      for (let i = 0; i < 9; i++) fireEvent.keyDown(surface, { key: '>' })
+      expect(video.playbackRate).toBe(2)
+    })
+
+    it('keeps the chosen speed when the video reloads or is replaced', async () => {
+      const { user, video } = await renderReadyRally()
+      await user.selectOptions(speedSelect(), '0.5')
+
+      // A source load resets the element to its default rate; the player re-applies ours.
+      act(() => {
+        video.playbackRate = 1
+        video.dispatchEvent(new Event('loadedmetadata'))
+      })
+      expect(video.playbackRate).toBe(0.5)
+
+      vi.mocked(URL.createObjectURL).mockReturnValueOnce('blob:other-video')
+      await user.upload(
+        screen.getByLabelText('Choose video file'),
+        new File(['y'], 'other.mp4', { type: 'video/mp4' }),
+      )
+      const next = await screen.findByTestId<HTMLVideoElement>('rally-video')
+      expect(next).not.toBe(video) // a fresh element, which starts at 1x
+      expect(next.playbackRate).toBe(0.5)
+      expect(speedSelect()).toHaveValue('0.5')
+    })
+  })
 })

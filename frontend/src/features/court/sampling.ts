@@ -72,6 +72,59 @@ export function shotIndexAt(shots: readonly Shot[], time: number): number | null
   return i === -1 ? null : i
 }
 
+/** A rally: a contiguous run of shots, from `first` to `last` (inclusive indices). */
+export interface RallySpan {
+  index: number
+  first: number
+  last: number
+  startTime: number
+  endTime: number
+}
+
+/** Pause between shots (seconds) that separates two rallies. */
+const RALLY_GAP_SEC = 0.05
+
+/**
+ * Groups shots into rallies. Within a rally each shot ends exactly when the
+ * next starts; a new rally starts at a serve or after a pause in play.
+ */
+export function groupRallies(shots: readonly Shot[]): RallySpan[] {
+  const rallies: RallySpan[] = []
+  shots.forEach((shot, i) => {
+    const current = rallies.at(-1)
+    const continues =
+      current !== undefined &&
+      shot.type !== 'serve' &&
+      shot.startTime <= shots[i - 1].endTime + RALLY_GAP_SEC
+    if (continues) {
+      current.last = i
+      current.endTime = shot.endTime
+    } else {
+      rallies.push({
+        index: rallies.length,
+        first: i,
+        last: i,
+        startTime: shot.startTime,
+        endTime: shot.endTime,
+      })
+    }
+  })
+  return rallies
+}
+
+/** The rally containing shot `shotIndex`, or null. */
+export function rallyOfShot(rallies: readonly RallySpan[], shotIndex: number): RallySpan | null {
+  return rallies.find((r) => shotIndex >= r.first && shotIndex <= r.last) ?? null
+}
+
+/** "Shot 3 / 11", or "Rally 2 / 3 · Shot 3 / 11" when the clip has several rallies. */
+export function shotPositionLabel(rallies: readonly RallySpan[], shotIndex: number): string {
+  const rally = rallyOfShot(rallies, shotIndex)
+  if (!rally) return ''
+  const shot = `Shot ${shotIndex - rally.first + 1} / ${rally.last - rally.first + 1}`
+  return rallies.length > 1 ? `Rally ${rally.index + 1} / ${rallies.length} · ${shot}` : shot
+}
+
 export interface ShotPath {
   shotIndex: number
   /** Contiguous runs of tracked positions; split wherever the shuttle was lost. */

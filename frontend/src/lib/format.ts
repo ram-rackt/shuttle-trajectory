@@ -16,3 +16,8 @@ export function formatBytes(bytes: number): string {
   const value = bytes / 1024 ** i
   return `${value >= 100 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`
 }
+
+/** Formats a playback speed, e.g. "0.25×", "1×", "1.5×". */
+export function formatRate(rate: number): string {
+  return `${rate}×`
+}

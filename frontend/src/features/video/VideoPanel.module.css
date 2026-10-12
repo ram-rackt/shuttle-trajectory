@@ -161,11 +161,29 @@
   transform: translate(-50%, -50%) scale(1.05);
 }
 
+/* Shown on the video while it plays at a speed other than 1×. */
+.rateBadge {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 0.6);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
 /* ---------- Header meta ---------- */
 
 .fileName {
   overflow: hidden;
-  max-width: 22ch;
+  min-width: 0;
+  max-width: 28ch;
   color: var(--text-secondary);
   font-weight: 500;
   text-overflow: ellipsis;
@@ -173,8 +191,22 @@
 }
 
 .fileSize {
+  flex-shrink: 0;
   margin-right: var(--space-1);
   white-space: nowrap;
+}
+
+/* Narrow panel: drop the least useful header details first. */
+@container (max-width: 560px) {
+  .fileSize {
+    display: none;
+  }
+}
+
+@container (max-width: 440px) {
+  .fileName {
+    display: none;
+  }
 }
 
 /* ---------- Transport ---------- */
@@ -194,6 +226,63 @@
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+/* ---------- Speed ---------- */
+
+.speed {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.speed:hover:not(:has(select:disabled)) {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+.speed:has(select:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+/* Not at normal speed: make it obvious. */
+.speed[data-active] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.speed:has(select:disabled) {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.speedSelect {
+  min-width: 3.4em;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: inherit;
+  appearance: none;
+  outline: none;
+}
+
+.speedSelect option {
+  background: var(--surface-raised);
+  color: var(--text-primary);
 }
 
 .seek {

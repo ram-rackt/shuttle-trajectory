@@ -37,7 +37,7 @@ function App() {
     e.target.value = ''
   }
 
-  const { title, subtitle } = headerTextFor(analysis.state, video?.file.name ?? null)
+  const { title } = headerTextFor(analysis.state, video?.file.name ?? null)
   const result = analysis.state.phase === 'ready' ? analysis.state.result : null
   const canMarkCourt =
     (analysis.state.phase === 'failed' && Boolean(analysis.state.jobId)) ||

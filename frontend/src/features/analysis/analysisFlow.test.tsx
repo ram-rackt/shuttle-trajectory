@@ -110,7 +110,8 @@ describe('analysis flow', () => {
     expect(summary).toHaveTextContent('Shot—')
     expect(within(steps).getByText('Review').closest('li')).toHaveAttribute('aria-current', 'step')
     expect(screen.getByRole('heading', { level: 1, name: 'Rally review' })).toBeInTheDocument()
-    expect(screen.getByText('final.mp4 · 2 shots')).toBeInTheDocument()
+    const timeline = screen.getByRole('region', { name: 'Rally timeline' })
+    expect(within(timeline).getByText('2 shots')).toBeInTheDocument()
   })
 
   it('shows a retryable error when the upload fails', async () => {

@@ -44,7 +44,7 @@ def _default_provider(settings: Settings) -> AnalysisProvider:
         return MockAnalysisProvider(settings.mock_stage_seconds)
     from .analysis.cv_provider import CVAnalysisProvider
 
-    return CVAnalysisProvider(settings.models_dir)
+    return CVAnalysisProvider(settings.models_dir, settings.person_model, settings.device)
 
 
 app = create_app()

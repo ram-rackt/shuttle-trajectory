@@ -18,7 +18,7 @@ docs/       Architecture notes and the analysis data contract
 
 - Node.js 20+ (developed on 22)
 - Python 3.11+ (developed on 3.14)
-- ~1 GB disk for PyTorch and model weights; Apple Silicon (MPS) or CUDA recommended
+- ~1 GB disk for PyTorch and model weights; CUDA or Apple Silicon (MPS) recommended
 
 ## Getting started
 
@@ -34,6 +34,37 @@ the baseline. Toggle **Overlay** on the video to see what was detected. If the
 court isn't found, you'll be asked to click its four corners.
 
 For UI work without the models: `make dev-backend-mock` (simulated data).
+
+On Windows the Makefile's `.venv/bin/...` paths don't exist (the venv uses
+`.venv\Scripts\`). Run the tools through Python rather than their `.exe`
+launchers. Windows Smart App Control blocks those unsigned launchers
+("An Application Control policy has blocked this file"):
+
+```powershell
+cd backend
+.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
+.venv\Scripts\python -m pytest
+```
+
+## Configuration
+
+The backend is configured entirely through environment variables:
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `RALLYREVIEW_ANALYZER` | `cv` | `cv` runs the real pipeline; `mock` returns simulated data |
+| `RALLYREVIEW_DATA_DIR` | `backend/data` | Uploaded videos (`<dir>/uploads`) |
+| `RALLYREVIEW_MODELS_DIR` | `backend/data/models` | TrackNet checkpoint (`ckpts/`) and Hugging Face cache (`hf/`) |
+| `RALLYREVIEW_PERSON_MODEL` | `PekingU/rtdetr_v2_r18vd` | RT-DETRv2 model id on Hugging Face, or a local path |
+| `RALLYREVIEW_DEVICE` | auto (`cuda`, then `mps`, then `cpu`) | Torch device for both models |
+| `RALLYREVIEW_MAX_UPLOAD_BYTES` | 2 GiB | Upload size limit |
+| `RALLYREVIEW_MOCK_STAGE_SECONDS` | `1.2` | Simulated stage duration (mock only) |
+
+The frontend dev server proxies `/api` to `RALLYREVIEW_BACKEND_URL`
+(default `http://127.0.0.1:8000`). `make models` (or
+`python backend/scripts/download_models.py`) honours `RALLYREVIEW_MODELS_DIR`
+and `RALLYREVIEW_PERSON_MODEL`, so weights can be fetched at build time and the
+server needs no network access at startup.
 
 ## Checks
 
@@ -51,7 +82,7 @@ make check    # all of the above
 - [Analysis contract](docs/analysis-contract.md): the trajectory data format
   the frontend consumes
 - [CV pipeline](docs/cv-pipeline.md): how analysis works, accuracy, limitations
-- [Third-party notices](THIRD_PARTY_NOTICES.md): TrackNetV3 (MIT), YOLO (AGPL-3.0)
+- [Third-party notices](THIRD_PARTY_NOTICES.md): TrackNetV3 (MIT), RT-DETRv2 (Apache-2.0)
 
 ## Roadmap
 

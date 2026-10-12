@@ -15,6 +15,8 @@ Tracking:
   are interpolated.
 """
 
+import bisect
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import cv2
@@ -323,33 +325,79 @@ def track_shuttle(
     image_width: int,
     *,
     learned: bool = False,
+    cuts: Sequence[int] = (),
 ) -> ShuttleTrack:
     """Builds the rally's shuttle track from per-frame candidates.
 
     `learned=True` is for TrackNet detections: one confident detection per
     frame, so short tracklets are kept and a resting shuttle (landing) isn't
-    discarded as "not moving".
+    discarded as "not moving". The track never continues across a `cut`
+    (a frame where edited footage jumps).
     """
-    tracklets = build_tracklets(
-        candidates,
-        fps,
-        image_width,
-        min_points=3 if learned else 4,
-        require_motion=not learned,
-    )
-    chain = select_tracklets(tracklets, fps, image_width)
+    if learned:
+        chain = link_sequential(candidates, fps, image_width, cuts=cuts)
+    else:
+        tracklets = build_tracklets(candidates, fps, image_width)
+        chain = select_tracklets(tracklets, fps, image_width)
     xy = np.full((frame_count, 2), np.nan)
     for tr in chain:
         for p in tr.points:
             if 0 <= p.frame < frame_count:
                 xy[p.frame] = (p.x, p.y)
-    _interpolate_short_gaps(xy, max_gap=max(2, round(fps * 0.15)))
+    _interpolate_short_gaps(xy, max_gap=max(2, round(fps * 0.15)), cuts=cuts)
     return ShuttleTrack(frames=np.arange(frame_count), xy=xy)
 
 
-def _interpolate_short_gaps(xy: np.ndarray, max_gap: int) -> None:
+MAX_STEP_PX = 70.0
+"""Fastest plausible shuttle motion per 1/60 s at 1080p (a smash just off the racket)."""
+
+
+def link_sequential(
+    candidates: dict[int, list[Candidate]],
+    fps: float,
+    image_width: int,
+    min_points: int = 3,
+    cuts: Sequence[int] = (),
+) -> list[Tracklet]:
+    """Links a learned detector's (at most one per frame) detections in time order.
+
+    No velocity model: a hit changes the shuttle's speed and direction within a
+    frame or two, and a constant-velocity gate drops exactly those detections,
+    which are the evidence for the hit. Runs are split only at long gaps or
+    physically impossible jumps; runs too short to be trusted are dropped
+    (isolated false positives).
+    """
+    px_scale = image_width / 1920
+    max_gap = max(2, round(fps * 0.25))
+    cut_list = sorted(cuts)
+    runs: list[Tracklet] = []
+    current = Tracklet()
+    for frame in sorted(candidates):
+        if not candidates[frame]:
+            continue
+        c = max(candidates[frame], key=lambda c: c.score)
+        if current.points:
+            last = current.points[-1]
+            gap = frame - last.frame
+            jump = np.hypot(c.x - last.x, c.y - last.y)
+            crosses_cut = bisect.bisect_right(cut_list, last.frame) != bisect.bisect_right(
+                cut_list, frame
+            )
+            too_far = jump > MAX_STEP_PX * px_scale * gap * (60 / fps) + 30 * px_scale
+            if gap > max_gap or too_far or crosses_cut:
+                runs.append(current)
+                current = Tracklet()
+        current.points.append(c)
+    runs.append(current)
+    return [r for r in runs if len(r.points) >= min_points]
+
+
+def _interpolate_short_gaps(xy: np.ndarray, max_gap: int, cuts: Sequence[int] = ()) -> None:
     seen = np.nonzero(~np.isnan(xy[:, 0]))[0]
+    cut_list = sorted(cuts)
     for a, b in zip(seen, seen[1:], strict=False):
+        if bisect.bisect_right(cut_list, a) != bisect.bisect_right(cut_list, b):
+            continue
         if 1 < b - a <= max_gap + 1:
             for k in range(a + 1, b):
                 u = (k - a) / (b - a)

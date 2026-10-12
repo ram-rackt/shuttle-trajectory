@@ -1,4 +1,5 @@
 import { Crosshair, FileJson, Route } from 'lucide-react'
+import { useMemo } from 'react'
 import { analysisResultUrl } from '../../api/client'
 import { Chip } from '../../components/ui/Chip'
 import { Panel } from '../../components/ui/Panel'
@@ -7,7 +8,7 @@ import { AnalysisStatusView } from '../analysis/AnalysisStatusView'
 import type { AnalysisState } from '../analysis/useAnalysis'
 import styles from './CourtPanel.module.css'
 import { CourtView } from './CourtView'
-import { shotIndexAt } from './sampling'
+import { groupRallies, rallyOfShot, shotIndexAt } from './sampling'
 import { SHOT_TYPE_LABEL } from './shotLabels'
 
 interface CourtPanelProps {
@@ -126,10 +127,20 @@ function Legend() {
 }
 
 function ShotSummary({ result, time }: { result: RallyAnalysis | null; time: number }) {
-  const index = result ? shotIndexAt(result.shots, time) : null
-  const shot = result && index !== null ? result.shots[index] : null
+  const shots = result?.shots ?? []
+  const rallies = useMemo(() => groupRallies(result?.shots ?? []), [result])
+  const index = shotIndexAt(shots, time)
+  const shot = index !== null ? shots[index] : null
+  const rally = index !== null ? rallyOfShot(rallies, index) : null
   const items = [
-    { label: 'Shot', value: shot && result ? `${index! + 1} / ${result.shots.length}` : '—' },
+    ...(rallies.length > 1
+      ? [{ label: 'Rally', value: rally ? `${rally.index + 1} / ${rallies.length}` : '—' }]
+      : []),
+    {
+      label: 'Shot',
+      value:
+        shot && rally ? `${index! - rally.first + 1} / ${rally.last - rally.first + 1}` : '—',
+    },
     { label: 'Type', value: shot ? SHOT_TYPE_LABEL[shot.type] : '—' },
     { label: 'Hitter', value: shot ? `Player ${shot.hitter}` : '—' },
   ]

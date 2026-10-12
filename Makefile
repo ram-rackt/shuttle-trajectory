@@ -13,7 +13,7 @@ setup-backend:
 	$(PY) -m pip install -e 'backend[dev,cv]'
 	$(MAKE) models
 
-# YOLO + TrackNetV3 weights into backend/data/models (git-ignored).
+# RT-DETRv2 + TrackNetV3 weights into backend/data/models (git-ignored).
 models:
 	$(PY) backend/scripts/download_models.py
 
@@ -22,11 +22,11 @@ dev-frontend:
 	cd frontend && npm run dev
 
 dev-backend:
-	cd backend && .venv/bin/uvicorn app.main:app --reload --reload-dir app --reload-dir rallycv --port 8000
+	cd backend && .venv/bin/python -m uvicorn app.main:app --reload --reload-dir app --reload-dir rallycv --port 8000
 
 # Simulated analysis data (no models needed), for UI work.
 dev-backend-mock:
-	cd backend && RALLYREVIEW_ANALYZER=mock .venv/bin/uvicorn app.main:app --reload --port 8000
+	cd backend && RALLYREVIEW_ANALYZER=mock .venv/bin/python -m uvicorn app.main:app --reload --port 8000
 
 test: test-frontend test-backend
 
@@ -34,15 +34,15 @@ test-frontend:
 	cd frontend && npm test
 
 test-backend:
-	cd backend && .venv/bin/pytest
+	cd backend && .venv/bin/python -m pytest
 
 # Slow tests: runs the models on real footage in backend/data/samples.
 test-cv:
-	cd backend && .venv/bin/pytest -m slow -v
+	cd backend && .venv/bin/python -m pytest -m slow -v
 
 lint:
 	cd frontend && npm run lint
-	cd backend && .venv/bin/ruff check . && .venv/bin/ruff format --check .
+	cd backend && .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 
 build:
 	cd frontend && npm run build

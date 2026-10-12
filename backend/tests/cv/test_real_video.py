@@ -19,12 +19,13 @@ pytestmark = pytest.mark.slow
 def result():
     if not SAMPLE.exists() or not (MODELS / "ckpts" / "TrackNet_best.pt").exists():
         pytest.skip("sample clip or model weights not available")
+    from app.config import DEFAULT_PERSON_MODEL
     from rallycv import pipeline
     from rallycv.players import RtDetrPersonDetector
 
     return pipeline.run(
         SAMPLE,
-        RtDetrPersonDetector(model_id="PekingU/rtdetr_v2_r18vd"),
+        RtDetrPersonDetector(DEFAULT_PERSON_MODEL, cache_dir=MODELS / "hf"),
         config=pipeline.PipelineConfig(tracknet_weights=MODELS / "ckpts" / "TrackNet_best.pt"),
     )
 
@@ -60,12 +61,13 @@ def test_clean_single_rally_clip() -> None:
     """The recommended sample: exactly one rally, serve to landing."""
     if not CLEAN.exists() or not (MODELS / "ckpts" / "TrackNet_best.pt").exists():
         pytest.skip("rally_clean.mp4 or model weights not available")
+    from app.config import DEFAULT_PERSON_MODEL
     from rallycv import pipeline
     from rallycv.players import RtDetrPersonDetector
 
     res = pipeline.run(
         CLEAN,
-        RtDetrPersonDetector(model_id="PekingU/rtdetr_v2_r18vd"),
+        RtDetrPersonDetector(DEFAULT_PERSON_MODEL, cache_dir=MODELS / "hf"),
         config=pipeline.PipelineConfig(tracknet_weights=MODELS / "ckpts" / "TrackNet_best.pt"),
     )
     assert res.stats["rallies"] == 1

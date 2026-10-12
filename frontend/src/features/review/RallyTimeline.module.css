@@ -96,6 +96,17 @@
   opacity: 1;
 }
 
+/* Where each rally starts (only when the clip holds several). */
+.rallyMark {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 0;
+  margin-left: -4px;
+  border-left: 1px dashed var(--border-strong);
+  pointer-events: none;
+}
+
 .playhead {
   position: absolute;
   top: -3px;
@@ -123,14 +134,71 @@
 
 /* ---------- Shot list ---------- */
 
+.rallyList {
+  position: relative; /* offset parent for keeping the active chip in view */
+  display: flex;
+  flex-direction: column;
+  max-height: 216px;
+  margin: 0 calc(-1 * var(--space-1));
+  padding: 2px var(--space-1);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.rallyRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.rallyList[data-multi] .rallyRow {
+  padding: var(--space-2) 0;
+}
+
+.rallyList[data-multi] .rallyRow:first-child {
+  padding-top: 0;
+}
+
+.rallyList[data-multi] .rallyRow:last-child {
+  padding-bottom: 0;
+}
+
+.rallyRow + .rallyRow {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.rallyLabel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 64px;
+  min-height: 32px;
+}
+
+.rallyName {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.rallyTime {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .shotList {
   display: flex;
+  flex: 1;
+  flex-wrap: wrap;
   gap: var(--space-2);
+  min-width: 0;
   margin: 0;
-  padding: 2px 2px var(--space-1);
-  overflow-x: auto;
+  padding: 0;
   list-style: none;
-  scrollbar-width: thin;
 }
 
 .shotChip {
@@ -166,6 +234,11 @@
 .shotChip:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.chipType {
+  min-width: 3.5em;
+  text-align: left;
 }
 
 .chipNumber {
@@ -209,5 +282,23 @@
 
   .trackRow .time {
     display: none;
+  }
+
+  /* Phones scroll the page; a nested scroll area just clips rows. */
+  .rallyList {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .rallyRow {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .rallyLabel {
+    flex-direction: row;
+    gap: var(--space-2);
+    width: auto;
+    min-height: 0;
   }
 }

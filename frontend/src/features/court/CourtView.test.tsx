@@ -69,6 +69,24 @@ describe('CourtView', () => {
     )
   })
 
+  it('shows only the current rally when the clip holds several', () => {
+    const twoRallies: RallyAnalysis = {
+      ...RALLY,
+      shots: [
+        ...RALLY.shots,
+        { index: 2, hitter: 'A', type: 'serve', startTime: 4, endTime: 4.5 },
+        { index: 3, hitter: 'B', type: 'lift', startTime: 4.5, endTime: 5 },
+      ],
+    }
+    render(<CourtView analysis={twoRallies} time={4.6} />)
+    const markers = screen.getAllByTestId('shot-marker')
+    expect(markers.map((m) => m.textContent)).toEqual(['1', '2'])
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(screen.getByRole('img')).toHaveAccessibleName(
+      'Top-down court with 2 rallies, 4 shots. Showing rally 2, shot 2: lift by Player B.',
+    )
+  })
+
   it('handles the time before the rally starts', () => {
     render(<CourtView analysis={RALLY} time={0} />)
     expect(screen.getByRole('img')).toHaveAccessibleName(/Rally not started/)

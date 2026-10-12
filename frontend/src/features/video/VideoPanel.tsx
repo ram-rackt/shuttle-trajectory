@@ -3,6 +3,7 @@ import {
   Eye,
   EyeOff,
   FileVideo,
+  Gauge,
   Maximize,
   Pause,
   Play,
@@ -24,11 +25,11 @@ import {
 import type { CourtCorners } from '../../api/client'
 import { Button } from '../../components/ui/Button'
 import { Panel } from '../../components/ui/Panel'
-import { formatBytes, formatTime } from '../../lib/format'
+import { formatBytes, formatRate, formatTime } from '../../lib/format'
 import type { CameraCalibration, RallyAnalysis } from '../../types/analysis'
 import { CourtMarker } from './CourtMarker'
 import type { LoadedVideo } from './useVideoFile'
-import type { VideoPlayer } from './useVideoPlayer'
+import { PLAYBACK_RATES, type VideoPlayer } from './useVideoPlayer'
 import { VideoOverlay } from './VideoOverlay'
 import styles from './VideoPanel.module.css'
 
@@ -189,6 +190,8 @@ function VideoSurface({ src, videoRef, player, onError, overlay, marking }: Vide
       ArrowRight: () => player.seekBy(SEEK_STEP_SECONDS),
       m: player.toggleMute,
       f: player.enterFullscreen,
+      '<': () => player.stepPlaybackRate(-1),
+      '>': () => player.stepPlaybackRate(1),
     }
     const action = actions[e.key]
     if (action) {
@@ -202,7 +205,7 @@ function VideoSurface({ src, videoRef, player, onError, overlay, marking }: Vide
       className={styles.surface}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      aria-label="Video player. Space to play or pause, arrow keys to seek."
+      aria-label="Video player. Space to play or pause, arrow keys to seek, < and > to change speed."
       role="group"
     >
       <video
@@ -231,6 +234,11 @@ function VideoSurface({ src, videoRef, player, onError, overlay, marking }: Vide
           onSubmit={marking.onSubmit}
           onCancel={marking.onCancel}
         />
+      )}
+      {player.playbackRate !== 1 && (
+        <span className={styles.rateBadge} aria-hidden="true" data-testid="rate-badge">
+          {formatRate(player.playbackRate)}
+        </span>
       )}
       {player.paused && !marking && (
         <button
@@ -281,6 +289,7 @@ function TransportBar({
         style={{ '--progress': `${progress}%` } as CSSProperties}
       />
       <span className={styles.time}>{formatTime(duration)}</span>
+      <SpeedSelect player={player} disabled={disabled} />
       <Button
         variant="ghost"
         size="sm"
@@ -298,6 +307,29 @@ function TransportBar({
         disabled={disabled}
       />
     </div>
+  )
+}
+
+/** Playback speed. The court and timeline follow the video's clock, so they slow down with it. */
+function SpeedSelect({ player, disabled }: { player: VideoPlayer; disabled: boolean }) {
+  const slowed = player.playbackRate !== 1
+  return (
+    <label className={styles.speed} data-active={slowed || undefined} title="Playback speed (< and >)">
+      <Gauge size={15} aria-hidden="true" />
+      <select
+        className={styles.speedSelect}
+        value={player.playbackRate}
+        onChange={(e) => player.setPlaybackRate(Number(e.target.value))}
+        disabled={disabled}
+        aria-label="Playback speed"
+      >
+        {PLAYBACK_RATES.map((rate) => (
+          <option key={rate} value={rate}>
+            {formatRate(rate)}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 

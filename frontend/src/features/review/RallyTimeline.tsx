@@ -1,14 +1,17 @@
 import { ChevronLeft, ChevronRight, ListOrdered } from 'lucide-react'
-import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { Button } from '../../components/ui/Button'
 import { Panel } from '../../components/ui/Panel'
 import { formatTime } from '../../lib/format'
 import type { RallyAnalysis, Shot } from '../../types/analysis'
 import {
+  groupRallies,
   nextShotTime,
   previousShotTime,
   shotIndexAt,
+  shotPositionLabel,
   shotSeekTime,
+  type RallySpan,
 } from '../court/sampling'
 import { SHOT_TYPE_LABEL } from '../court/shotLabels'
 import styles from './RallyTimeline.module.css'
@@ -30,7 +33,8 @@ interface RallyTimelineProps {
  * video, prev/next shot navigation and a clickable shot list.
  */
 export function RallyTimeline({ result, duration, currentTime, onSeek }: RallyTimelineProps) {
-  const shots = result?.shots ?? []
+  const shots = useMemo(() => result?.shots ?? [], [result])
+  const rallies = useMemo(() => groupRallies(shots), [shots])
   const active = shotIndexAt(shots, currentTime)
   const disabled = duration <= 0
   const prev = previousShotTime(shots, currentTime)
@@ -48,7 +52,7 @@ export function RallyTimeline({ result, duration, currentTime, onSeek }: RallyTi
         onClick={() => prev !== null && onSeek(prev)}
       />
       <span className={styles.navLabel} aria-live="polite">
-        {active === null ? `${shots.length} shots` : `Shot ${active + 1} / ${shots.length}`}
+        {active === null ? summaryLabel(shots.length, rallies.length) : shotPositionLabel(rallies, active)}
       </span>
       <Button
         variant="ghost"
@@ -69,6 +73,7 @@ export function RallyTimeline({ result, duration, currentTime, onSeek }: RallyTi
       <div className={styles.body}>
         <Track
           shots={shots}
+          rallies={rallies}
           active={active}
           duration={duration}
           currentTime={currentTime}
@@ -76,7 +81,13 @@ export function RallyTimeline({ result, duration, currentTime, onSeek }: RallyTi
           onSeek={onSeek}
         />
         {result ? (
-          <ShotList shots={shots} active={active} disabled={disabled} onSeek={onSeek} />
+          <ShotList
+            shots={shots}
+            rallies={rallies}
+            active={active}
+            disabled={disabled}
+            onSeek={onSeek}
+          />
         ) : (
           <p className={styles.text}>Shot markers appear here once a rally has been analysed.</p>
         )}
@@ -85,8 +96,14 @@ export function RallyTimeline({ result, duration, currentTime, onSeek }: RallyTi
   )
 }
 
+function summaryLabel(shots: number, rallies: number): string {
+  const s = `${shots} ${shots === 1 ? 'shot' : 'shots'}`
+  return rallies > 1 ? `${rallies} rallies · ${s}` : s
+}
+
 interface TrackProps {
   shots: readonly Shot[]
+  rallies: readonly RallySpan[]
   active: number | null
   duration: number
   currentTime: number
@@ -94,7 +111,7 @@ interface TrackProps {
   onSeek: (time: number) => void
 }
 
-function Track({ shots, active, duration, currentTime, disabled, onSeek }: TrackProps) {
+function Track({ shots, rallies, active, duration, currentTime, disabled, onSeek }: TrackProps) {
   const trackRef = useRef<HTMLDivElement>(null)
   const pct = (t: number) => (duration > 0 ? `${(Math.min(Math.max(t / duration, 0), 1) * 100).toFixed(3)}%` : '0%')
 
@@ -169,6 +186,15 @@ function Track({ shots, active, duration, currentTime, disabled, onSeek }: Track
             aria-hidden="true"
           />
         ))}
+        {rallies.length > 1 &&
+          rallies.map((rally) => (
+            <span
+              key={rally.index}
+              className={styles.rallyMark}
+              style={{ left: pct(rally.startTime) }}
+              aria-hidden="true"
+            />
+          ))}
         {!disabled && (
           <>
             <span className={styles.progress} style={{ width: pct(currentTime) }} aria-hidden="true" />
@@ -188,47 +214,69 @@ function Track({ shots, active, duration, currentTime, disabled, onSeek }: Track
 
 interface ShotListProps {
   shots: readonly Shot[]
+  rallies: readonly RallySpan[]
   active: number | null
   disabled: boolean
   onSeek: (time: number) => void
 }
 
-function ShotList({ shots, active, disabled, onSeek }: ShotListProps) {
-  const listRef = useRef<HTMLOListElement>(null)
+/** Shot chips, one row per rally (labelled when there are several). */
+function ShotList({ shots, rallies, active, disabled, onSeek }: ShotListProps) {
+  const listRef = useRef<HTMLDivElement>(null)
+  const multi = rallies.length > 1
 
-  // Keep the active shot in view horizontally without scrolling the page.
+  // Keep the active shot in view inside the list without scrolling the page.
   useEffect(() => {
     const list = listRef.current
     if (!list || active === null) return
-    const item = list.children[active] as HTMLElement | undefined
+    const item = list.querySelector<HTMLElement>('[aria-current="true"]')
     if (!item) return
-    const left = item.offsetLeft - list.offsetLeft
-    if (left < list.scrollLeft || left + item.offsetWidth > list.scrollLeft + list.clientWidth) {
-      list.scrollTo?.({ left: left - list.clientWidth / 2 + item.offsetWidth / 2, behavior: 'smooth' })
+    const top = item.offsetTop
+    const bottom = top + item.offsetHeight
+    if (top < list.scrollTop || bottom > list.scrollTop + list.clientHeight) {
+      list.scrollTo?.({ top: top - list.clientHeight / 2 + item.offsetHeight / 2, behavior: 'smooth' })
     }
   }, [active])
 
   return (
-    <ol ref={listRef} className={styles.shotList} aria-label="Shots">
-      {shots.map((shot, i) => (
-        <li key={shot.index}>
-          <button
-            type="button"
-            className={styles.shotChip}
-            data-hitter={shot.hitter}
-            aria-current={i === active ? 'true' : undefined}
-            disabled={disabled}
-            onClick={() => onSeek(shotSeekTime(shot))}
-            title={`Jump to shot ${i + 1} (${formatTime(shot.startTime)})`}
-          >
-            <span className={styles.chipNumber}>{i + 1}</span>
-            <span className={styles.chipType}>{SHOT_TYPE_LABEL[shot.type]}</span>
-            <span className={styles.chipHitter} aria-label={`by Player ${shot.hitter}`}>
-              {shot.hitter}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ol>
+    <div ref={listRef} className={styles.rallyList} data-multi={multi || undefined}>
+      {rallies.map((rally) => {
+        const label = multi ? `Rally ${rally.index + 1}` : 'Shots'
+        return (
+          <div key={rally.index} className={styles.rallyRow}>
+            {multi && (
+              <span className={styles.rallyLabel} aria-hidden="true">
+                <span className={styles.rallyName}>{label}</span>
+                <span className={styles.rallyTime}>{formatTime(rally.startTime)}</span>
+              </span>
+            )}
+            <ol className={styles.shotList} aria-label={label}>
+              {shots.slice(rally.first, rally.last + 1).map((shot, k) => {
+                const i = rally.first + k
+                return (
+                  <li key={shot.index}>
+                    <button
+                      type="button"
+                      className={styles.shotChip}
+                      data-hitter={shot.hitter}
+                      aria-current={i === active ? 'true' : undefined}
+                      disabled={disabled}
+                      onClick={() => onSeek(shotSeekTime(shot))}
+                      title={`Jump to ${multi ? `rally ${rally.index + 1}, ` : ''}shot ${k + 1} (${formatTime(shot.startTime)})`}
+                    >
+                      <span className={styles.chipNumber}>{k + 1}</span>
+                      <span className={styles.chipType}>{SHOT_TYPE_LABEL[shot.type]}</span>
+                      <span className={styles.chipHitter} aria-label={`by Player ${shot.hitter}`}>
+                        {shot.hitter}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ol>
+          </div>
+        )
+      })}
+    </div>
   )
 }

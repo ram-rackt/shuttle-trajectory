@@ -1,10 +1,13 @@
-import type { RallyAnalysis } from '../../types/analysis'
+import type { RallyAnalysis, Shot } from '../../types/analysis'
 import {
   buildShotPaths,
+  groupRallies,
   nextShotTime,
   playerPositionAt,
   previousShotTime,
+  rallyOfShot,
   shotIndexAt,
+  shotPositionLabel,
   shuttlePositionAt,
   shuttleTrail,
 } from './sampling'
@@ -167,5 +170,40 @@ describe('shot navigation', () => {
     expect(previousShotTime(RALLY.shots, 3.1)).toBeCloseTo(1)
     expect(previousShotTime(RALLY.shots, 1.1)).toBeCloseTo(1)
     expect(previousShotTime(RALLY.shots, 0.5)).toBeNull()
+  })
+})
+
+describe('groupRallies', () => {
+  const shot = (index: number, type: Shot['type'], startTime: number, endTime: number): Shot => ({
+    index,
+    hitter: index % 2 === 0 ? 'A' : 'B',
+    type,
+    startTime,
+    endTime,
+  })
+
+  it('splits at serves and at pauses in play', () => {
+    const shots = [
+      shot(0, 'clear', 0.5, 1.5), // clip starts mid-rally: no serve
+      shot(1, 'smash', 1.5, 2.0),
+      shot(2, 'serve', 3.0, 4.0), // after a pause
+      shot(3, 'lift', 4.0, 5.0),
+      shot(4, 'serve', 5.0, 6.0), // straight after: a serve still starts a rally
+    ]
+    const rallies = groupRallies(shots)
+    expect(rallies.map((r) => [r.first, r.last])).toEqual([
+      [0, 1],
+      [2, 3],
+      [4, 4],
+    ])
+    expect(rallies[1]).toMatchObject({ index: 1, startTime: 3, endTime: 5 })
+  })
+
+  it('labels positions within the rally', () => {
+    const one = groupRallies(RALLY.shots)
+    expect(shotPositionLabel(one, 1)).toBe('Shot 2 / 2')
+    const two = groupRallies([...RALLY.shots, { ...RALLY.shots[0], index: 2, startTime: 5, endTime: 6 }])
+    expect(shotPositionLabel(two, 2)).toBe('Rally 2 / 2 · Shot 1 / 1')
+    expect(rallyOfShot(two, 1)?.index).toBe(0)
   })
 })

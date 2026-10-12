@@ -1,6 +1,6 @@
 """Player detection and tracking.
 
-People are detected per frame (YOLO by default). Each detection's feet point
+People are detected per frame (RT-DETRv2 by default). Each detection's feet point
 (bottom-centre of the box) is mapped to the floor with the court homography;
 detections standing outside the court area (umpires, line judges, coaches)
 are dropped, and the remaining ones are assigned to the near half (Player A)
@@ -33,31 +33,63 @@ class PersonDetector(Protocol):
         ...
 
 
+DETECT_LONG_SIDE = 640
+"""Network input size along the image's long side (RT-DETR is trained at 640)."""
+
+
+def input_size(height: int, width: int, long_side: int = DETECT_LONG_SIDE) -> tuple[int, int]:
+    """Network input (height, width): the image's own aspect ratio, long side
+    `long_side`, both multiples of 32. Squashing a wide frame into a square
+    wastes pixels on the short axis and distorts people."""
+    scale = long_side / max(height, width)
+    return (
+        max(32, round(height * scale / 32) * 32),
+        max(32, round(width * scale / 32) * 32),
+    )
+
+
 class RtDetrPersonDetector:
     """RT-DETRv2 person detector via Hugging Face Transformers."""
 
-    def __init__(self, model_id: str, device: str | None = None, conf: float = 0.25) -> None:
-        from transformers import RTDetrV2ForObjectDetection, RTDetrImageProcessor
-        import torch
+    def __init__(
+        self,
+        model_id: str,
+        device: str | None = None,
+        conf: float = 0.25,
+        cache_dir: Path | None = None,
+    ) -> None:
+        from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
 
         self._device = device or _best_device()
         self._conf = conf
-        
-        self._processor = RTDetrImageProcessor.from_pretrained(model_id)
-        self._model = RTDetrV2ForObjectDetection.from_pretrained(model_id).to(self._device)
+
+        def load(cls):  # noqa: ANN001, ANN202
+            # Prefer the local cache (filled by scripts/download_models.py) so
+            # startup needs no network; download only if it isn't there.
+            try:
+                return cls.from_pretrained(model_id, cache_dir=cache_dir, local_files_only=True)
+            except OSError:
+                return cls.from_pretrained(model_id, cache_dir=cache_dir)
+
+        self._processor = load(RTDetrImageProcessor)
+        self._model = load(RTDetrV2ForObjectDetection).to(self._device)
         self._model.eval()
+        self._person_label = person_label_id(self._model.config.id2label, model_id)
 
     def detect(self, frame_bgr: np.ndarray) -> np.ndarray:
-        import torch
         import cv2
+        import torch
         from PIL import Image
 
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(frame_rgb)
+        h, w = input_size(image.height, image.width)
 
-        inputs = self._processor(images=image, return_tensors="pt").to(self._device)
+        inputs = self._processor(
+            images=image, size={"height": h, "width": w}, return_tensors="pt"
+        ).to(self._device)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self._model(**inputs)
 
         target_sizes = torch.tensor([(image.height, image.width)]).to(self._device)
@@ -69,23 +101,23 @@ class RtDetrPersonDetector:
         labels = results["labels"].cpu().numpy()
         boxes = results["boxes"].cpu().numpy()
 
-        person_id = None
-        for k, v in self._model.config.id2label.items():
-            if v.lower() == 'person':
-                person_id = k
-                break
-        
-        if person_id is None:
-            person_id = 1  # Fallback to COCO 'person' label (usually 1, sometimes 0)
-
-        mask = labels == person_id
+        mask = labels == self._person_label
         if not np.any(mask):
             return np.zeros((0, 5))
+        return np.hstack([boxes[mask], scores[mask][:, None]])
 
-        person_boxes = boxes[mask]
-        person_scores = scores[mask][:, None]
-        
-        return np.hstack([person_boxes, person_scores])
+
+def person_label_id(id2label: dict[int, str], model_id: str = "model") -> int:
+    """The class id a detector uses for people.
+
+    Looked up by name: ids differ between label maps (0 in Hugging Face COCO
+    models, where 1 is "bicycle"), so guessing a number would silently detect
+    the wrong thing.
+    """
+    for k, v in id2label.items():
+        if v.lower() == "person":
+            return int(k)
+    raise ValueError(f"{model_id} has no 'person' class; use a COCO-trained detector.")
 
 
 def _best_device() -> str:
@@ -117,12 +149,20 @@ class PlayerTracks:
         default_factory=lambda: {"A": [], "B": []}
     )
 
-    def box_at(self, player: str, frame: int, max_frame_gap: int) -> np.ndarray | None:
-        """Nearest observed box within max_frame_gap frames."""
+    def box_at(self, player: str, frame: float, max_frame_gap: int) -> np.ndarray | None:
+        """The player's box at `frame`: interpolated between the observations on
+        either side when both are within max_frame_gap, else the nearest one
+        within max_frame_gap (None if there is none)."""
         obs = self.observations[player]
         if not obs:
             return None
-        frames = np.array([o.frame for o in obs])
+        frames = np.array([o.frame for o in obs], dtype=np.float64)
+        j = int(np.searchsorted(frames, frame))
+        if 0 < j < len(obs):
+            f0, f1 = frames[j - 1], frames[j]
+            if frame - f0 <= max_frame_gap and f1 - frame <= max_frame_gap and f1 > f0:
+                u = (frame - f0) / (f1 - f0)
+                return obs[j - 1].box * (1 - u) + obs[j].box * u
         i = int(np.argmin(np.abs(frames - frame)))
         return obs[i].box if abs(frames[i] - frame) <= max_frame_gap else None
 

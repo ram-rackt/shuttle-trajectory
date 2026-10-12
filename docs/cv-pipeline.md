@@ -9,7 +9,8 @@ Package: `backend/rallycv` (independent of the web app). Adapter to the API:
   frame (standard BWF TV view). Hand-held or panning footage is not supported:
   the court is calibrated once per clip.
 - **Singles.** One player per half; the near player is "A", the far player "B".
-- Ideally **one rally** per clip. Dead time and several rallies are handled
+- Ideally **one rally** per clip. Dead time, several rallies and highlight reels
+  (rallies spliced together with hard cuts in the same camera view) are handled
   (see *Rallies*), but replays and camera cuts are skipped, not analysed.
 
 ## Stages
@@ -17,9 +18,9 @@ Package: `backend/rallycv` (independent of the web app). Adapter to the API:
 | # | Stage | Module | Method |
 |---|-------|--------|--------|
 | 0 | Detecting court | `court.py`, `camera.py` | Median of 25 frames removes players. Floor region from its dominant colour; white-line pixels (thin, bright, unsaturated); Hough lines; exhaustive fit of the BWF court model scored by *pixels of painted line explained*; least-squares refinement. Focal length and pose recovered from the homography (principal point at image centre), giving a full 3D camera. |
-| 1 | Tracking players and shuttle | `players.py`, `tracknet.py`, `shuttle.py` | One streaming pass. Repeated frames (30 fps content in 60 fps files) and off-view frames (replays) are skipped. **YOLO11n** person detection at 15 Hz; feet mapped to the floor; people outside the court (umpires, judges) dropped; near half = A, far half = B. **TrackNetV3** (pretrained, MIT) detects the shuttle on every distinct frame. Without TrackNet weights a classical three-frame-difference detector is used. |
-| 2 | Detecting shots | `shots.py` | Detections are linked into tracklets and the best non-overlapping chain is kept. **Hits** are direction-change cusps of the image track within a player's reach (box widened, extended above the head), plus track restarts next to a player. **Landings**: the shuttle falling to rest on the floor; this ends the rally and the next 1.2 s is dead time. Hitters alternate; the first hit of a rally is the serve. |
-| 3 | Mapping to court | `mapping.py`, `pipeline.py` | Each shot runs from the hitter's floor position to the receiver's (or the landing spot). In-flight positions come from intersecting camera rays with the vertical plane between hitter and receiver; where that is ill-conditioned (shots straight down the camera axis) progress is interpolated with a drag-like profile. Shot type is a heuristic from start/end depth, speed and apex height. |
+| 1 | Tracking players and shuttle | `players.py`, `tracknet.py`, `shuttle.py` | One streaming pass. Repeated frames (30 fps content in 60 fps files) and off-view frames (replays) are skipped. **RT-DETRv2** (`PekingU/rtdetr_v2_r18vd` via Hugging Face Transformers) person detection 7.5 times a second, only on the image region where players can be (court plus margins, up to head height) at that region's aspect ratio; boxes are interpolated between detections; feet mapped to the floor; people outside the court (umpires, judges) dropped; near half = A, far half = B. **TrackNetV3** (pretrained, MIT) detects the shuttle on every distinct frame, in 8-frame windows. A second, straddling window (whose heatmaps are averaged with the first) runs only where the first pass looks unreliable: a frame with no shuttle, or a detection that jumps implausibly far. That recovers the blurred frames at hits for about 70% of the cost of always running both. Without TrackNet weights a classical three-frame-difference detector is used. |
+| 2 | Detecting shots | `shots.py`, `pipeline.py` | **Cuts**: frames where far more of the picture changes than any motion in play (edited footage) split the clip; play never continues across one. TrackNet detections are linked in time order without a velocity model, so the fast, direction-changing detections just after a hit are kept. **Hits** are direction-change cusps of the image track, sudden speed kicks (overheads taken near the top of the flight), and fast track restarts next to a player. **Landings**: the shuttle falling to rest on the floor; this ends the rally and the next 1.2 s is dead time. **Who hit** is chosen per rally by dynamic programming: hitters must alternate, each hit costs how far it is from that player's reach, a long gap may hide a missed hit (inserted), a weak detection may be dropped. The first hit is a **serve** only if the shuttle wasn't already in flight before it (a clip starting mid-rally has no serve). |
+| 3 | Mapping to court | `mapping.py`, `pipeline.py` | Each shot runs from the hitter's floor position to the receiver's (or the landing spot). In-flight positions come from intersecting camera rays with the vertical plane between hitter and receiver; where that is ill-conditioned (shots straight down the camera axis) progress is interpolated with a drag-like profile. **Shot type** uses only measured quantities: hitter and receiver depth (from their feet), flight time, how high the flight loops in the image, whether the hitter struck it overhead and whether the receiver had to take it overhead. |
 
 The contract output also carries the shuttle's detected **image position**
 and the **court→image homography**, so the UI can overlay what was detected
@@ -35,7 +36,8 @@ correct.
 - hits found within 0.15 s, attributed to the right player
 - landing detected; hit points within 0.5 m; landing spot within 0.3 m
 
-**Real broadcast footage** (China Open 2025, 22 s, 1080p, hand-checked frame by frame):
+**Real broadcast footage** (China Open 2025, 22 s, 1080p, hand-checked frame by frame).
+Measured with the earlier YOLO11n person detector; not yet re-measured with RT-DETRv2:
 
 | Measure | Result |
 |---|---|
@@ -44,9 +46,11 @@ correct.
 | Shuttle | detected in ~75% of distinct frames (TrackNet) |
 | Hits | 14 detected; ~12 clearly correct, 1 about 0.5 s late, ~4 missed during long detection gaps |
 | Rally structure | landing detected; dead time after it ignored; next serve found |
-| Speed | ~35–40 s for a 22 s 1080p60 clip on an Apple M2 (MPS) |
+| Speed | ~35–40 s for a 22 s 1080p60 clip on an Apple M2 (MPS); ~110 s for a 21 s 1080p clip on an Intel Core Ultra 7 258V, CPU only (was ~260 s before the optimisations above, same shots) |
 
-Shot-type labels are heuristic and the least reliable output.
+Shot-type labels are rule-based and the least reliable output.
+
+**Highlight reel** (Changzhou, 21 s, 1080p, three rallies spliced with hard cuts, hand-checked): all three cuts found; each rally starts with the correct serve; every detected hit has the right hitter (18 shots, against 14 with about half wrong before cut handling and joint hitter assignment). One hit is missed: the last touch of a rally where TrackNet never sees the shuttle again before the cut.
 
 ## Known limitations / next steps
 
@@ -59,19 +63,20 @@ Shot-type labels are heuristic and the least reliable output.
 3. **Shot types.** A small learned classifier (e.g. trained on ShuttleSet
    labels) would replace the heuristics.
 4. **Doubles** and moving cameras are out of scope.
-5. **Licensing.** YOLO is AGPL-3.0; see `THIRD_PARTY_NOTICES.md`.
+5. **Licensing.** RT-DETRv2 (Apache-2.0) and TrackNetV3 (MIT) are permissive; see `THIRD_PARTY_NOTICES.md`.
 
 ## Running
 
 ```sh
-make models                       # downloads YOLO + TrackNet weights
+make models                       # downloads RT-DETRv2 + TrackNet weights
 make dev-backend                  # CV analyzer (default)
 make dev-backend-mock             # simulated data, no models
 make test-cv                      # slow end-to-end test on data/samples/rally_china1.mp4
 ```
 
 Environment variables: `RALLYREVIEW_ANALYZER` (`cv` | `mock`),
-`RALLYREVIEW_MODELS_DIR`, `RALLYREVIEW_DATA_DIR`, `RALLYREVIEW_MAX_UPLOAD_BYTES`.
+`RALLYREVIEW_MODELS_DIR`, `RALLYREVIEW_PERSON_MODEL`, `RALLYREVIEW_DEVICE`,
+`RALLYREVIEW_DATA_DIR`, `RALLYREVIEW_MAX_UPLOAD_BYTES` (see the README).
 
 Recommended sample (one complete rally, serve to landing, 21 s): `rally_clean.mp4`.
 To recreate the sample clips:

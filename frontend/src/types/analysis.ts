@@ -94,7 +94,7 @@ export interface RallyAnalysis {
   players: PlayerTrack[]
   /** Time-ordered shuttle samples. */
   shuttle: ShuttleSample[]
-  /** Time-ordered, non-overlapping shots. A rally starts with a serve. */
+  /** Time-ordered, non-overlapping shots. A rally seen from its start begins with a serve. */
   shots: Shot[]
   /** Present for CV output: lets the UI overlay the detected court on the video. */
   calibration?: CameraCalibration | null

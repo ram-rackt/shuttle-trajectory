@@ -3,10 +3,13 @@ import type { CourtPoint, PlayerId, RallyAnalysis, Shot } from '../../types/anal
 import { COURT, courtLines, NET_X, toPolylinePoints, toSvg } from './geometry'
 import {
   buildShotPaths,
+  groupRallies,
   playerPositionAt,
+  rallyOfShot,
   shotIndexAt,
   shuttlePositionAt,
   shuttleTrail,
+  type RallySpan,
   type ShotPath,
 } from './sampling'
 import { SHOT_TYPE_LABEL } from './shotLabels'
@@ -22,6 +25,8 @@ const VIEW_BOX = [
   COURT.width + PAD_TOP + PAD_BOTTOM,
 ].join(' ')
 
+const NO_PATHS: ShotPath[] = []
+
 /** Seconds of shuttle history drawn behind the shuttle. */
 const TRAIL_SECONDS = 0.35
 
@@ -34,13 +39,22 @@ interface CourtViewProps {
 }
 
 /**
- * Top-down 2D court for one rally at a given time. A pure function of
- * (analysis, time); static layers are memoized so only players and the
- * shuttle re-render as time changes.
+ * Top-down 2D court at a given time. A pure function of (analysis, time);
+ * static layers are memoized so only players and the shuttle re-render as
+ * time changes. When the clip holds several rallies, only the current one's
+ * shots are drawn (numbered within that rally).
  */
 export function CourtView({ analysis, time }: CourtViewProps) {
-  const paths = useMemo(() => buildShotPaths(analysis), [analysis])
+  // Per rally, the paths of its shots. Built once so each list keeps its identity
+  // and the memoized trajectory layer only re-renders when the rally changes.
+  const { rallies, pathsByRally } = useMemo(() => {
+    const paths = buildShotPaths(analysis)
+    const rallies = groupRallies(analysis.shots)
+    return { rallies, pathsByRally: rallies.map((r) => paths.slice(r.first, r.last + 1)) }
+  }, [analysis])
   const activeShot = shotIndexAt(analysis.shots, time)
+  const rally = (activeShot !== null ? rallyOfShot(rallies, activeShot) : null) ?? rallies[0] ?? null
+  const rallyPaths = rally ? pathsByRally[rally.index] : NO_PATHS
   const shuttle = shuttlePositionAt(analysis.shuttle, time)
   const trail = shuttleTrail(analysis.shuttle, time, TRAIL_SECONDS)
   const players = analysis.players.map((track) => ({
@@ -54,11 +68,16 @@ export function CourtView({ analysis, time }: CourtViewProps) {
       viewBox={VIEW_BOX}
       preserveAspectRatio="xMidYMid meet"
       role="img"
-      aria-label={describe(analysis.shots, activeShot)}
+      aria-label={describe(analysis.shots, rallies, activeShot)}
       data-testid="court-view"
     >
       <CourtSurface />
-      <TrajectoryLayer paths={paths} shots={analysis.shots} activeShot={activeShot} />
+      <TrajectoryLayer
+        paths={rallyPaths}
+        shots={analysis.shots}
+        activeShot={activeShot}
+        firstShot={rally?.first ?? 0}
+      />
       {players.map(
         ({ id, position }) => position && <PlayerMarker key={id} id={id} position={position} />,
       )}
@@ -76,11 +95,17 @@ export function CourtView({ analysis, time }: CourtViewProps) {
   )
 }
 
-function describe(shots: readonly Shot[], active: number | null): string {
-  const base = `Top-down court with ${shots.length} shots.`
+function describe(shots: readonly Shot[], rallies: readonly RallySpan[], active: number | null): string {
+  const base =
+    rallies.length > 1
+      ? `Top-down court with ${rallies.length} rallies, ${shots.length} shots.`
+      : `Top-down court with ${shots.length} shots.`
   if (active === null) return `${base} Rally not started.`
   const shot = shots[active]
-  return `${base} Showing shot ${active + 1}: ${SHOT_TYPE_LABEL[shot.type].toLowerCase()} by Player ${shot.hitter}.`
+  const rally = rallyOfShot(rallies, active)
+  const number = rally ? active - rally.first + 1 : active + 1
+  const where = rallies.length > 1 && rally ? `rally ${rally.index + 1}, shot ${number}` : `shot ${number}`
+  return `${base} Showing ${where}: ${SHOT_TYPE_LABEL[shot.type].toLowerCase()} by Player ${shot.hitter}.`
 }
 
 const CourtSurface = memo(function CourtSurface() {
@@ -131,17 +156,21 @@ const CourtSurface = memo(function CourtSurface() {
 })
 
 interface TrajectoryLayerProps {
+  /** Shots of the rally being shown. */
   paths: ShotPath[]
   shots: readonly Shot[]
   activeShot: number | null
+  /** Index of the rally's first shot, for numbering within the rally. */
+  firstShot: number
 }
 
 const TrajectoryLayer = memo(function TrajectoryLayer({
   paths,
   shots,
   activeShot,
+  firstShot,
 }: TrajectoryLayerProps) {
-  const active = activeShot !== null ? paths[activeShot] : null
+  const active = paths.find((p) => p.shotIndex === activeShot) ?? null
   return (
     <g aria-hidden="true" data-testid="trajectory">
       {/* Other shots, faint, underneath */}
@@ -170,14 +199,14 @@ const TrajectoryLayer = memo(function TrajectoryLayer({
       ))}
       {active?.endPoint && <LandingRing point={active.endPoint} />}
 
-      {/* Numbered markers where each shot was struck */}
-      {paths.map(
+      {/* Numbered markers where each shot was struck; the active one drawn last, on top */}
+      {[...paths.filter((p) => p !== active), ...(active ? [active] : [])].map(
         (path) =>
           path.hitPoint && (
             <ShotMarker
               key={path.shotIndex}
               point={path.hitPoint}
-              number={path.shotIndex + 1}
+              number={path.shotIndex - firstShot + 1}
               hitter={shots[path.shotIndex].hitter}
               active={path.shotIndex === activeShot}
             />

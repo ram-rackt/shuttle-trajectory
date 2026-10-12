@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 export interface PlayerState {
   currentTime: number
   duration: number
   paused: boolean
   muted: boolean
+  /** Playback speed: 1 is normal, below 1 is slow motion. */
+  playbackRate: number
   /** Native frame size in pixels (0 until metadata loads). */
   videoWidth: number
   videoHeight: number
@@ -16,7 +18,14 @@ export interface PlayerControls {
   seekBy: (delta: number) => void
   toggleMute: () => void
   enterFullscreen: () => void
+  /** Sets the speed (one of PLAYBACK_RATES); kept when another video is loaded. */
+  setPlaybackRate: (rate: number) => void
+  /** Next slower (-1) or faster (+1) speed in PLAYBACK_RATES. */
+  stepPlaybackRate: (direction: -1 | 1) => void
 }
+
+/** Speeds offered in the UI, slowest first. */
+export const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.5, 2] as const
 
 export type VideoPlayer = PlayerState & PlayerControls
 
@@ -25,6 +34,7 @@ const INITIAL_STATE: PlayerState = {
   duration: 0,
   paused: true,
   muted: false,
+  playbackRate: 1,
   videoWidth: 0,
   videoHeight: 0,
 }
@@ -38,6 +48,7 @@ const MEDIA_EVENTS = [
   'ended',
   'seeked',
   'volumechange',
+  'ratechange',
   'emptied',
 ] as const
 
@@ -47,6 +58,7 @@ function readState(v: HTMLVideoElement): PlayerState {
     duration: Number.isFinite(v.duration) ? v.duration : 0,
     paused: v.paused,
     muted: v.muted,
+    playbackRate: v.playbackRate,
     videoWidth: v.videoWidth,
     videoHeight: v.videoHeight,
   }
@@ -62,13 +74,17 @@ export function useVideoPlayer(
   src: string | null,
 ): VideoPlayer {
   const [state, setState] = useState<PlayerState>(INITIAL_STATE)
+  // The speed the user chose. A new source resets the element to 1x, so it is
+  // re-applied whenever a video is attached.
+  const rateRef = useRef(1)
 
   useEffect(() => {
     const v = videoRef.current
     if (!v || !src) {
-      setState(INITIAL_STATE)
+      setState({ ...INITIAL_STATE, playbackRate: rateRef.current })
       return
     }
+    applyRate(v, rateRef.current)
 
     let frame = 0
     const tick = () => {
@@ -85,10 +101,14 @@ export function useVideoPlayer(
       }
     }
 
+    // Loading a source resets playbackRate to defaultPlaybackRate; keep ours.
+    const keepRate = () => applyRate(v, rateRef.current)
+    v.addEventListener('loadedmetadata', keepRate)
     MEDIA_EVENTS.forEach((e) => v.addEventListener(e, sync))
     sync()
     return () => {
       cancelAnimationFrame(frame)
+      v.removeEventListener('loadedmetadata', keepRate)
       MEDIA_EVENTS.forEach((e) => v.removeEventListener(e, sync))
     }
   }, [videoRef, src])
@@ -140,5 +160,43 @@ export function useVideoPlayer(
     }
   }, [videoRef])
 
-  return { ...state, togglePlay, seek, seekBy, toggleMute, enterFullscreen }
+  const setPlaybackRate = useCallback(
+    (rate: number) => {
+      if (!(PLAYBACK_RATES as readonly number[]).includes(rate)) return
+      rateRef.current = rate
+      const v = videoRef.current
+      if (v) {
+        applyRate(v, rate)
+        setState(readState(v))
+      } else {
+        setState((s) => ({ ...s, playbackRate: rate }))
+      }
+    },
+    [videoRef],
+  )
+
+  const stepPlaybackRate = useCallback(
+    (direction: -1 | 1) => {
+      const i = PLAYBACK_RATES.indexOf(rateRef.current as (typeof PLAYBACK_RATES)[number])
+      const next = PLAYBACK_RATES[Math.min(Math.max(i + direction, 0), PLAYBACK_RATES.length - 1)]
+      setPlaybackRate(next)
+    },
+    [setPlaybackRate],
+  )
+
+  return {
+    ...state,
+    togglePlay,
+    seek,
+    seekBy,
+    toggleMute,
+    enterFullscreen,
+    setPlaybackRate,
+    stepPlaybackRate,
+  }
+}
+
+function applyRate(v: HTMLVideoElement, rate: number) {
+  v.defaultPlaybackRate = rate
+  v.playbackRate = rate
 }

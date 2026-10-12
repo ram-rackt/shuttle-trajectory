@@ -32,14 +32,17 @@ the authors' pretrained checkpoint (downloaded by
 Paper: Chen, Y.-J., & Wang, Y.-S. (2023). TrackNetV3: Enhancing ShuttleCock
 Tracking with Augmentations and Trajectory Rectification.
 
-## Ultralytics YOLO (person detection) — AGPL-3.0
+## RT-DETRv2 (person detection) — Apache-2.0
 
-Player detection uses the `ultralytics` package and the YOLO11n weights, both
-licensed under **AGPL-3.0** (https://www.ultralytics.com/license). AGPL
-obligations extend to software offered over a network. Before any commercial
-or closed-source deployment, either obtain an Ultralytics Enterprise licence or
-replace `YoloPersonDetector` (behind the `PersonDetector` interface in
-`backend/rallycv/players.py`) with a permissively licensed detector.
+Player detection uses RT-DETRv2 (`PekingU/rtdetr_v2_r18vd` by default, set with
+`RALLYREVIEW_PERSON_MODEL`) through Hugging Face Transformers, both licensed
+under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+The weights are downloaded from the Hugging Face Hub by
+`backend/scripts/download_models.py`. If you switch to another model, check
+its licence.
+
+Paper: Lv, W., et al. (2024). RT-DETRv2: Improved Baseline with Bag-of-Freebies
+for Real-Time Detection Transformer.
 
 ## Sample footage (not distributed)
 

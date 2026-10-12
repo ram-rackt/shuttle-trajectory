@@ -43,7 +43,9 @@ the backend produces it, first from mock data and later from the CV pipeline.
   `currentTime` every animation frame while playing. That single clock drives
   the court, the current-shot strip and the timeline; all seeking (scrubber,
   timeline drag, shot list, prev/next, keyboard) goes through `player.seek`, so
-  the video stays the source of truth.
+  the video stays the source of truth. Playback speed (0.25x to 2x, `<` / `>`)
+  is set on the video element, so the court and timeline follow it with no
+  extra wiring; the chosen speed is re-applied when a new video loads.
 - `src/features/review/RallyTimeline.tsx`: shot blocks, playhead, drag-to-scrub,
   keyboard slider (arrows ±1 s, Shift ±5 s, PageUp/PageDown prev/next shot,
   Home/End) and a clickable shot list.
@@ -80,7 +82,7 @@ Failed jobs carry `errorCode` (e.g. `court_not_found`, `shuttle_not_found`,
 
 Uploads are stored under `backend/data/uploads/` (git-ignored). Config via env:
 `RALLYREVIEW_DATA_DIR`, `RALLYREVIEW_MAX_UPLOAD_BYTES` (default 2 GiB),
-`RALLYREVIEW_MOCK_STAGE_SECONDS` (default 1.2).
+`RALLYREVIEW_MOCK_STAGE_SECONDS` (default 1.2); full list in the README.
 
 The frontend sends `duration_sec` (read from the video metadata in the browser)
 so the mock can fit the rally to the clip. The real pipeline will read the
