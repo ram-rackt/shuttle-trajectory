@@ -50,14 +50,19 @@ def _count_frames(cap: cv2.VideoCapture) -> int:
     return n
 
 
-def iter_frames(path: Path) -> Iterator[tuple[int, np.ndarray]]:
-    """Yields (frame_index, BGR frame) for every decodable frame, in order."""
+def iter_frames(
+    path: Path, start: int = 0, stop: int | None = None
+) -> Iterator[tuple[int, np.ndarray]]:
+    """Yields (frame_index, BGR frame) for every decodable frame in [start, stop),
+    in order. Indices are counted from the start of the video."""
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise VideoError("Could not open the video.")
     try:
-        i = 0
-        while True:
+        if start > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+        i = start
+        while stop is None or i < stop:
             ok, frame = cap.read()
             if not ok:
                 break

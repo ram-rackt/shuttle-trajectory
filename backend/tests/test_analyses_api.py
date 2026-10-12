@@ -1,3 +1,4 @@
+import hashlib
 from collections.abc import Sequence
 
 from fastapi.testclient import TestClient
@@ -31,8 +32,12 @@ def test_upload_runs_mock_analysis_to_ready(client: TestClient, settings: Settin
     assert result["durationSec"] == 12.5
     assert result["shots"][-1]["endTime"] <= 12.5
 
-    stored = list((settings.data_dir / "uploads").iterdir())
-    assert [p.name for p in stored] == [f"{created['id']}.mp4"]
+    # Stored once, named by its content.
+    stored = list((settings.storage_dir / "videos").iterdir())
+    assert [p.name for p in stored] == [f"{hashlib.sha256(VIDEO[1]).hexdigest()}.mp4"]
+    assert status["video"]["source"] == "upload"
+    assert status["video"]["name"] == "rally.mp4"
+    assert not status["cached"]
 
 
 def test_upload_without_duration_uses_default(client: TestClient) -> None:
@@ -48,18 +53,27 @@ def test_rejects_unsupported_extension(client: TestClient) -> None:
 def test_rejects_empty_upload(client: TestClient, settings: Settings) -> None:
     res = upload(client, files=("rally.mp4", b"", "video/mp4"))
     assert res.status_code == 400
-    assert not any((settings.data_dir / "uploads").iterdir())
+    assert not any((settings.storage_dir / "videos").iterdir())
+    assert not any((settings.storage_dir / "tmp").iterdir())
 
 
 def test_rejects_oversized_upload(client: TestClient, settings: Settings) -> None:
     big = b"x" * (settings.max_upload_bytes + 1)
     res = upload(client, files=("rally.mp4", big, "video/mp4"))
     assert res.status_code == 413
-    assert not any((settings.data_dir / "uploads").iterdir())
+    assert not any((settings.storage_dir / "videos").iterdir())
+    assert not any((settings.storage_dir / "tmp").iterdir())
 
 
 def test_rejects_invalid_duration(client: TestClient) -> None:
     assert upload(client, data={"duration_sec": "-1"}).status_code == 422
+
+
+def test_rejects_videos_over_the_length_limit(client: TestClient, settings: Settings) -> None:
+    too_long = str(settings.max_video_seconds + 60)
+    res = upload(client, data={"duration_sec": too_long})
+    assert res.status_code == 422
+    assert "limit is 11 minutes" in res.json()["detail"]
 
 
 def test_unknown_job_is_404(client: TestClient) -> None:
@@ -130,6 +144,41 @@ def test_recalibration_reruns_same_video_with_corners(settings: Settings) -> Non
         first, second = provider.requests
         assert second.video_path == first.video_path
         assert second.court_corners == ((0.2, 0.9), (0.8, 0.9), (0.7, 0.5), (0.3, 0.5))
+
+
+class WarmingProvider(CourtNotFoundProvider):
+    """Also offers warm_up, recording what it was asked to precompute."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.warmed: list[tuple[AnalysisRequest, object]] = []
+
+    def warm_up(self, request: AnalysisRequest, should_stop) -> None:  # noqa: ANN001
+        self.warmed.append((request, should_stop))
+
+
+def test_court_not_found_starts_a_warm_up_for_the_re_run(settings: Settings) -> None:
+    """While the user marks the corners, the shuttle detections are computed so
+    the re-run with the corners is quicker. Another video's job stops it."""
+    provider = WarmingProvider()
+    with TestClient(create_app(settings, provider=provider)) as client:
+        job_id = upload(client).json()["id"]
+        assert client.get(f"/api/analyses/{job_id}").json()["errorCode"] == "court_not_found"
+        ((request, should_stop),) = provider.warmed
+        assert request.video_path == provider.requests[0].video_path
+        assert request.cache_dir == provider.requests[0].cache_dir is not None
+        assert not should_stop()
+
+        runner = client.app.state.runner
+        runner._active["other-job"] = "a-different-video"
+        assert should_stop()
+        runner._active["other-job"] = request.video_path.stem  # the re-run, same video
+        assert not should_stop()
+        del runner._active["other-job"]
+
+        # A successful analysis doesn't warm anything up.
+        client.post(f"/api/analyses/{job_id}/calibration", json={"corners": CORNERS})
+        assert len(provider.warmed) == 1
 
 
 def test_recalibration_validates_corners(client: TestClient) -> None:

@@ -19,6 +19,12 @@ cv = [
     "torch>=2.4",
 ]
 
+# YouTube links: yt-dlp downloads the video stream (no ffmpeg needed). YouTube
+# also needs a JavaScript runtime on the PATH (Node.js or Deno).
+youtube = [
+    "yt-dlp[default]>=2026.8.19",
+]
+
 dev = [
     "pytest>=8",
     "httpx2>=2.13",

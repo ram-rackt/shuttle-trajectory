@@ -36,6 +36,8 @@ class ShotFlight:
     end: np.ndarray
     apex_height: float | None
     features: ShotFeatures
+    outcome: str | None = None
+    """For the last shot of a rally: "net" (it ended in the net) or "landed"."""
 
 
 @dataclass
@@ -94,6 +96,8 @@ def _map_one(
         if p0 is None:
             p0 = np.array([cm.WIDTH / 2, cm.NET_Y / 2 if hit.player == "A" else cm.NET_Y * 1.5])
         p1 = _landing_point(track, int(f1), calibration) if last and rally.landed else None
+        if last and rally.net_point is not None:
+            p1 = rally.net_point  # the shot ended in the net
         if p1 is None:
             p1 = players.position_at(receiver, f1)
         if p1 is None:
@@ -147,8 +151,16 @@ def _map_one(
                     overhead=overhead,
                     received_high=received_high,
                 ),
+                outcome=_outcome(rally) if last else None,
             )
         )
+
+
+def _outcome(rally: Rally) -> str | None:
+    """How a rally's last shot ended, when that was seen."""
+    if rally.net_point is not None:
+        return "net"
+    return "landed" if rally.landed else None
 
 
 def _image_shape(

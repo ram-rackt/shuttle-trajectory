@@ -14,6 +14,7 @@ vi.mock('../../api/client', async (importOriginal) => {
     createAnalysis: vi.fn(),
     getAnalysisStatus: vi.fn(),
     getAnalysisResult: vi.fn(),
+    cancelAnalysis: vi.fn().mockResolvedValue({}),
   }
 })
 
@@ -149,6 +150,11 @@ describe('analysis flow', () => {
 
     await user.click(await within(court).findByRole('button', { name: 'Cancel' }))
     expect(within(court).getByText('Analysis cancelled')).toBeVisible()
+    // The server is told too, by the id the upload was sent with, even though
+    // the upload never returned (so the job can't be left running).
+    const sentId = createAnalysis.mock.calls[0][2]?.jobId
+    expect(sentId).toMatch(/^[0-9a-f]{32}$/)
+    expect(api.cancelAnalysis).toHaveBeenCalledWith(sentId)
 
     await user.click(within(court).getByRole('button', { name: 'Analyse rally' }))
     expect(await within(court).findByText('Uploading video')).toBeVisible()
@@ -206,6 +212,7 @@ describe('manual court calibration', () => {
         { x: 500 / 1600, y: 300 / 900 },
       ],
       expect.any(AbortSignal),
+      expect.stringMatching(/^[0-9a-f]{32}$/),
     )
     expect(await within(court).findByTestId('court-view')).toBeVisible()
     expect(screen.queryByTestId('court-marker-surface')).not.toBeInTheDocument()

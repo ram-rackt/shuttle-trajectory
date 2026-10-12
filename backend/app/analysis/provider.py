@@ -17,6 +17,11 @@ class AnalysisRequest:
     court_corners: tuple[tuple[float, float], ...] | None = None
     """Optional manual calibration: the 4 outer court corners in normalized image
     coordinates (0-1), ordered near-left, near-right, far-right, far-left."""
+    start_sec: float | None = None
+    end_sec: float | None = None
+    """Analyse only this part of the video; result times stay relative to its start."""
+    cache_dir: Path | None = None
+    """Where this video's intermediate results may be cached (None: no caching)."""
 
 
 class AnalysisError(Exception):
@@ -39,5 +44,12 @@ class AnalysisProvider(Protocol):
     def stages(self) -> Sequence[str]:
         """Human-readable pipeline stage labels, in order."""
         ...
+
+    # Optionally, a `version` attribute identifying what produces the results;
+    # cached results from a different version are not reused.
+    #
+    # Optionally, `warm_up(request, should_stop)`: precompute what doesn't need
+    # the court (into request.cache_dir) after the court wasn't found, while the
+    # user marks its corners. It must return soon after should_stop() is True.
 
     def analyze(self, request: AnalysisRequest, on_progress: ProgressCallback) -> RallyAnalysis: ...

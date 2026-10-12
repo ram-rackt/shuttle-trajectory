@@ -60,6 +60,10 @@ class Shot(CamelModel):
     type: ShotType
     start_time: float
     end_time: float
+    outcome: Literal["net", "landed"] | None = None
+    """How the shot ended when it ended the rally: "net" (it struck the net)
+    or "landed" (it came down on the floor). Null for shots that were returned
+    or whose end wasn't seen."""
 
 
 class CameraCalibration(CamelModel):

@@ -9,8 +9,6 @@ export const VIDEO_ACCEPT_ATTR = [
   ...ACCEPTED_VIDEO_EXTENSIONS.map((ext) => `.${ext}`),
 ].join(',')
 
-export const MAX_VIDEO_BYTES = 2 * 1024 ** 3
-
 function extensionOf(name: string): string {
   const dot = name.lastIndexOf('.')
   return dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
@@ -21,7 +19,7 @@ function extensionOf(name: string): string {
  * supported video. Browsers sometimes report an empty MIME type, so the
  * extension is accepted as a fallback.
  */
-export function validateVideoFile(file: File): string | null {
+export function validateVideoFile(file: File, maxBytes: number): string | null {
   const typeOk = ACCEPTED_VIDEO_MIME_TYPES.includes(file.type)
   const extOk = (ACCEPTED_VIDEO_EXTENSIONS as readonly string[]).includes(extensionOf(file.name))
   if (!typeOk && !extOk) {
@@ -30,8 +28,8 @@ export function validateVideoFile(file: File): string | null {
   if (file.size === 0) {
     return `“${file.name}” is empty.`
   }
-  if (file.size > MAX_VIDEO_BYTES) {
-    return `“${file.name}” is ${formatBytes(file.size)}. The limit is ${formatBytes(MAX_VIDEO_BYTES)}.`
+  if (file.size > maxBytes) {
+    return `“${file.name}” is ${formatBytes(file.size)}. The limit is ${formatBytes(maxBytes)}.`
   }
   return null
 }

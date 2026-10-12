@@ -71,7 +71,15 @@ export interface Shot {
   startTime: number
   /** Time of the next strike, or rally end (seconds). */
   endTime: number
+  /**
+   * How the shot ended when it ended the rally: 'net' (it struck the net) or
+   * 'landed' (it came down on the floor). Absent or null for shots that were
+   * returned, or whose end wasn't seen.
+   */
+  outcome?: ShotOutcome | null
 }
+
+export type ShotOutcome = 'net' | 'landed'
 
 export interface CameraCalibration {
   /**

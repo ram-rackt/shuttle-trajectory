@@ -241,6 +241,17 @@
   text-align: left;
 }
 
+.chipOutcome {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: rgb(226 87 76 / 0.16);
+  color: var(--status-error-text);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .chipNumber {
   display: inline-flex;
   align-items: center;

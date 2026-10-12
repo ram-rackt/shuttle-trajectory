@@ -34,9 +34,12 @@ export function AnalysisStatusView({
     case 'uploading':
       return (
         <ProgressCard
-          title="Uploading video"
+          title={state.label ? 'Sending link' : 'Uploading video'}
           percent={state.progress * 100}
-          caption={state.progress >= 1 ? 'Finishing upload…' : 'Sending the rally to the analyser'}
+          caption={
+            state.label ??
+            (state.progress >= 1 ? 'Finishing upload…' : 'Sending the rally to the analyser')
+          }
           onCancel={onCancel}
         />
       )

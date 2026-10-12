@@ -6,27 +6,37 @@ import { Header } from './components/layout/Header'
 import { Sidebar } from './components/layout/Sidebar'
 import { Button } from './components/ui/Button'
 import { headerTextFor, reviewStepFor } from './features/analysis/presentation'
-import { useAnalysis } from './features/analysis/useAnalysis'
+import {
+  downloadProgressFor,
+  isAnalysisActive,
+  playbackUrlFor,
+  useAnalysis,
+} from './features/analysis/useAnalysis'
 import { CourtPanel } from './features/court/CourtPanel'
 import { RallyTimeline } from './features/review/RallyTimeline'
 import { ReviewSteps } from './features/review/ReviewSteps'
-import { useVideoFile } from './features/video/useVideoFile'
+import { useVideoSource } from './features/video/useVideoFile'
 import { VIDEO_ACCEPT_ATTR } from './features/video/videoFile'
 import { useVideoPlayer } from './features/video/useVideoPlayer'
 import { VideoPanel } from './features/video/VideoPanel'
 import { useBackendStatus } from './hooks/useBackendStatus'
+import { useServerConfig } from './hooks/useServerConfig'
 
 function App() {
   const backendStatus = useBackendStatus()
-  const { video, error, selectFile, clear, reportPlaybackError } = useVideoFile()
-  const analysis = useAnalysis(video)
+  const config = useServerConfig()
+  const { source, error, selectFile, selectYouTube, clear, reportPlaybackError } =
+    useVideoSource(config.maxUploadBytes)
+  const analysis = useAnalysis(source, config.maxVideoSeconds)
+  // The local file, or the server's copy of a YouTube video once downloaded.
+  const playbackUrl = playbackUrlFor(source, analysis.video)
   // One clock for the whole review: the video element drives the court and timeline.
   const videoRef = useRef<HTMLVideoElement>(null)
-  const player = useVideoPlayer(videoRef, video?.url ?? null)
+  const player = useVideoPlayer(videoRef, playbackUrl)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Manual court marking applies to the video it was started for.
   const [markingFor, setMarkingFor] = useState<string | null>(null)
-  const marking = video !== null && markingFor === video.url
+  const marking = source !== null && markingFor === source.key
 
   const openFilePicker = () => fileInputRef.current?.click()
 
@@ -37,12 +47,14 @@ function App() {
     e.target.value = ''
   }
 
-  const { title } = headerTextFor(analysis.state, video?.file.name ?? null)
+  const { title } = headerTextFor(analysis.state, source?.name ?? null)
   const result = analysis.state.phase === 'ready' ? analysis.state.result : null
   const canMarkCourt =
     (analysis.state.phase === 'failed' && Boolean(analysis.state.jobId)) ||
     (result?.source === 'cv' && analysis.state.phase === 'ready')
-  const startMarking = canMarkCourt && video ? () => setMarkingFor(video.url) : undefined
+  const startMarking =
+    canMarkCourt && source && playbackUrl ? () => setMarkingFor(source.key) : undefined
+  const downloadProgress = downloadProgressFor(source, analysis.state)
 
   return (
     <AppShell
@@ -53,13 +65,13 @@ function App() {
           center={<ReviewSteps current={reviewStepFor(analysis.state)} />}
           actions={
             <Button
-              variant={video ? 'secondary' : 'primary'}
+              variant={source ? 'secondary' : 'primary'}
               icon={<Upload size={16} />}
-              aria-label={video ? 'Upload another rally' : 'Upload rally'}
+              aria-label={source ? 'Upload another rally' : 'Upload rally'}
               onClick={openFilePicker}
             >
               <span className={styles.uploadLabel}>
-                {video ? 'Upload another' : 'Upload rally'}
+                {source ? 'Upload another' : 'Upload rally'}
               </span>
             </Button>
           }
@@ -78,12 +90,18 @@ function App() {
       />
       <div className={styles.workspace}>
         <VideoPanel
-          video={video}
+          source={source}
+          playbackUrl={playbackUrl}
+          downloadProgress={downloadProgress}
+          downloading={isAnalysisActive(analysis.state)}
           videoRef={videoRef}
           player={player}
           error={error}
+          maxUploadBytes={config.maxUploadBytes}
+          youtubeEnabled={config.youtube.enabled}
           onBrowse={openFilePicker}
           onFile={selectFile}
+          onYouTube={selectYouTube}
           onClear={clear}
           onPlaybackError={reportPlaybackError}
           overlay={

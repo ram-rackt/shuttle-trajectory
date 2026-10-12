@@ -242,6 +242,8 @@ def _shuttle_samples(
 class MockAnalysisProvider:
     """Simulates pipeline stages with delays, then returns generated data."""
 
+    version = "mock-1"
+
     def __init__(self, stage_seconds: float = 1.2) -> None:
         self._stage_seconds = stage_seconds
 

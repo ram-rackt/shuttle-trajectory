@@ -1,4 +1,4 @@
-import { formatBytes, formatTime } from './format'
+import { formatBytes, formatTime, parseTimecode } from './format'
 
 describe('formatTime', () => {
   it.each([
@@ -25,5 +25,21 @@ describe('formatBytes', () => {
     [2 * 1024 ** 3, '2.0 GB'],
   ])('formats %s as %s', (input, expected) => {
     expect(formatBytes(input)).toBe(expected)
+  })
+})
+
+describe('parseTimecode', () => {
+  it.each([
+    ['83', 83],
+    ['1:23', 83],
+    ['01:02:03', 3723],
+    ['0:05.5', 5.5],
+    [' 10:00 ', 600],
+  ])('parses %s', (text, seconds) => {
+    expect(parseTimecode(text)).toBe(seconds)
+  })
+
+  it.each(['', 'abc', '1:75', '1::2', '-5', '1:2:3:4', '1:2x'])('rejects %j', (text) => {
+    expect(parseTimecode(text)).toBeNull()
   })
 })

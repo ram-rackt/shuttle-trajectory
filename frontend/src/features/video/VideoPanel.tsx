@@ -1,9 +1,13 @@
 import {
   AlertCircle,
+  CloudOff,
+  ExternalLink,
   Eye,
   EyeOff,
   FileVideo,
   Gauge,
+  Link2,
+  Loader2,
   Maximize,
   Pause,
   Play,
@@ -15,6 +19,7 @@ import {
 } from 'lucide-react'
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -22,27 +27,38 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from 'react'
-import type { CourtCorners } from '../../api/client'
+import type { CourtCorners, YouTubeInfo } from '../../api/client'
 import { Button } from '../../components/ui/Button'
 import { Panel } from '../../components/ui/Panel'
 import { formatBytes, formatRate, formatTime } from '../../lib/format'
 import type { CameraCalibration, RallyAnalysis } from '../../types/analysis'
 import { CourtMarker } from './CourtMarker'
-import type { LoadedVideo } from './useVideoFile'
+import type { VideoSource, YouTubeSource } from './useVideoFile'
 import { PLAYBACK_RATES, type VideoPlayer } from './useVideoPlayer'
 import { VideoOverlay } from './VideoOverlay'
 import styles from './VideoPanel.module.css'
+import { YouTubeForm } from './YouTubeForm'
 
 const SEEK_STEP_SECONDS = 5
 
 interface VideoPanelProps {
-  video: LoadedVideo | null
+  source: VideoSource | null
+  /** What the player plays: the local file, or the server's copy of a YouTube video. */
+  playbackUrl: string | null
+  /** For a YouTube video still being fetched: download progress, 0 to 1 (null if unknown). */
+  downloadProgress?: number | null
+  /** False once the analysis has stopped (failed or cancelled): a YouTube video
+   *  that isn't on the server by then won't arrive. */
+  downloading?: boolean
   /** Owned by the parent so the court and timeline share the same clock. */
   videoRef: RefObject<HTMLVideoElement | null>
   player: VideoPlayer
   error: string | null
+  maxUploadBytes: number
+  youtubeEnabled: boolean
   onBrowse: () => void
   onFile: (file: File) => void
+  onYouTube: (info: YouTubeInfo, startSec: number | null, endSec: number | null) => void
   onClear: () => void
   onPlaybackError: () => void
   /** CV results to draw over the video (court lines, players, shuttle). */
@@ -51,14 +67,20 @@ interface VideoPanelProps {
   marking?: { onSubmit: (corners: CourtCorners) => void; onCancel: () => void } | null
 }
 
-/** Left panel: rally video drop target, preview and playback controls. */
+/** Left panel: choose a video (file or YouTube link), then play it with controls. */
 export function VideoPanel({
-  video,
+  source,
+  playbackUrl,
+  downloadProgress = null,
+  downloading = true,
   videoRef,
   player,
   error,
+  maxUploadBytes,
+  youtubeEnabled,
   onBrowse,
   onFile,
+  onYouTube,
   onClear,
   onPlaybackError,
   overlay = null,
@@ -67,9 +89,9 @@ export function VideoPanel({
   const drag = useFileDrop(onFile)
   const [showOverlay, setShowOverlay] = useState(true)
 
-  const meta = video ? (
+  const meta = source ? (
     <>
-      {overlay && (
+      {overlay && playbackUrl && (
         <Button
           variant="ghost"
           size="sm"
@@ -81,10 +103,25 @@ export function VideoPanel({
           Overlay
         </Button>
       )}
-      <span className={styles.fileName} title={video.file.name}>
-        {video.file.name}
-      </span>
-      <span className={styles.fileSize}>{formatBytes(video.file.size)}</span>
+      {source.kind === 'youtube' ? (
+        <a
+          className={`${styles.fileName} ${styles.sourceLink}`}
+          href={source.info.url}
+          target="_blank"
+          rel="noreferrer"
+          title={`${source.name} (open on YouTube)`}
+        >
+          <span className={styles.sourceLinkText}>{source.name}</span>
+          <ExternalLink size={12} aria-hidden="true" />
+        </a>
+      ) : (
+        <>
+          <span className={styles.fileName} title={source.name}>
+            {source.name}
+          </span>
+          <span className={styles.fileSize}>{formatBytes(source.file.size)}</span>
+        </>
+      )}
       <Button variant="secondary" size="sm" onClick={onBrowse}>
         Replace
       </Button>
@@ -106,11 +143,11 @@ export function VideoPanel({
       title="Rally video"
       icon={<Video size={16} />}
       meta={meta}
-      footer={<TransportBar player={player} disabled={!video} />}
+      footer={<TransportBar player={player} disabled={!playbackUrl} />}
     >
       <div
         className={styles.stage}
-        data-state={video ? 'loaded' : 'empty'}
+        data-state={source ? 'loaded' : 'empty'}
         data-dragging={drag.isDragging || undefined}
         onDragEnter={drag.onDragEnter}
         onDragOver={drag.onDragOver}
@@ -118,23 +155,35 @@ export function VideoPanel({
         onDrop={drag.onDrop}
         data-testid="video-stage"
       >
-        {video ? (
+        {playbackUrl ? (
           <VideoSurface
-            key={video.url}
-            src={video.url}
+            key={playbackUrl}
+            src={playbackUrl}
             videoRef={videoRef}
             player={player}
             onError={onPlaybackError}
             overlay={showOverlay ? overlay : null}
             marking={marking}
           />
+        ) : source?.kind === 'youtube' ? (
+          <YouTubePending
+            source={source}
+            progress={downloadProgress}
+            downloading={downloading}
+          />
         ) : (
-          <EmptyDropzone error={error} onBrowse={onBrowse} />
+          <EmptyState
+            error={error}
+            maxUploadBytes={maxUploadBytes}
+            youtubeEnabled={youtubeEnabled}
+            onBrowse={onBrowse}
+            onYouTube={onYouTube}
+          />
         )}
         {drag.isDragging && (
           <div className={styles.dropOverlay} aria-hidden="true">
             <Upload size={28} />
-            <span>{video ? 'Drop to replace video' : 'Drop to load video'}</span>
+            <span>{source ? 'Drop to replace video' : 'Drop to load video'}</span>
           </div>
         )}
       </div>
@@ -142,25 +191,138 @@ export function VideoPanel({
   )
 }
 
-function EmptyDropzone({ error, onBrowse }: { error: string | null; onBrowse: () => void }) {
+type SourceTab = 'file' | 'youtube'
+
+const TABS: { id: SourceTab; label: string }[] = [
+  { id: 'file', label: 'Upload a file' },
+  { id: 'youtube', label: 'YouTube link' },
+]
+
+/** No video yet: upload a file, or (when the server allows it) paste a YouTube link. */
+function EmptyState({
+  error,
+  maxUploadBytes,
+  youtubeEnabled,
+  onBrowse,
+  onYouTube,
+}: {
+  error: string | null
+  maxUploadBytes: number
+  youtubeEnabled: boolean
+  onBrowse: () => void
+  onYouTube: VideoPanelProps['onYouTube']
+}) {
+  const [tab, setTab] = useState<SourceTab>('file')
+  const tabsId = useId()
+  const active: SourceTab = youtubeEnabled ? tab : 'file'
+
   return (
-    <div className={styles.dropzone}>
-      <span className={styles.dropIcon} aria-hidden="true">
-        <FileVideo size={26} strokeWidth={1.6} />
-      </span>
-      <h3 className={styles.dropTitle}>Drop a rally video here</h3>
-      <p className={styles.dropText}>
-        A single rally filmed from behind the baseline gives the best results.
-      </p>
-      <Button variant="primary" icon={<Upload size={16} />} onClick={onBrowse}>
-        Choose video
-      </Button>
-      <p className={styles.dropHint}>MP4, MOV or WebM · up to 2 GB</p>
+    <div className={styles.dropzone} data-tab={active}>
+      {youtubeEnabled && (
+        <div className={styles.tabs} role="tablist" aria-label="Video source">
+          {TABS.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`${tabsId}-${id}`}
+              aria-selected={active === id}
+              aria-controls={`${tabsId}-${id}-panel`}
+              className={styles.tab}
+              onClick={() => setTab(id)}
+            >
+              {id === 'file' ? (
+                <Upload size={15} aria-hidden="true" />
+              ) : (
+                <Link2 size={15} aria-hidden="true" />
+              )}
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {active === 'file' ? (
+        <div
+          className={styles.tabPanel}
+          role={youtubeEnabled ? 'tabpanel' : undefined}
+          id={`${tabsId}-file-panel`}
+          aria-labelledby={youtubeEnabled ? `${tabsId}-file` : undefined}
+        >
+          <span className={styles.dropIcon} aria-hidden="true">
+            <FileVideo size={26} strokeWidth={1.6} />
+          </span>
+          <h3 className={styles.dropTitle}>Drop a rally video here</h3>
+          <p className={styles.dropText}>
+            A single rally filmed from behind the baseline gives the best results.
+          </p>
+          <Button variant="primary" icon={<Upload size={16} />} onClick={onBrowse}>
+            Choose video
+          </Button>
+          <p className={styles.dropHint}>
+            MP4, MOV or WebM · up to {formatBytes(maxUploadBytes)}
+          </p>
+        </div>
+      ) : (
+        <div
+          className={styles.tabPanel}
+          role="tabpanel"
+          id={`${tabsId}-youtube-panel`}
+          aria-labelledby={`${tabsId}-youtube`}
+        >
+          <h3 className={styles.dropTitle}>Analyse a YouTube video</h3>
+          <YouTubeForm onSubmit={onYouTube} />
+        </div>
+      )}
       {error && (
         <p className={styles.error} role="alert">
           <AlertCircle size={16} aria-hidden="true" />
           {error}
         </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A YouTube video that isn't playable yet: its thumbnail and download progress
+ * while the server fetches it, or a note when the analysis stopped before the
+ * download finished (the court panel says why and offers a retry).
+ */
+function YouTubePending({
+  source,
+  progress,
+  downloading,
+}: {
+  source: YouTubeSource
+  progress: number | null
+  downloading: boolean
+}) {
+  const { info, startSec, endSec } = source
+  const part =
+    startSec !== null && endSec !== null
+      ? ` · analysing ${formatTime(startSec)}–${formatTime(endSec)}`
+      : ''
+  return (
+    <div className={styles.pending} data-testid="youtube-pending">
+      {info.thumbnailUrl && <img className={styles.pendingThumb} src={info.thumbnailUrl} alt="" />}
+      {downloading ? (
+        <div className={styles.pendingInfo} role="status">
+          <Loader2 size={22} className={styles.spin} aria-hidden="true" />
+          <p className={styles.pendingTitle}>Fetching the video from YouTube…</p>
+          <p className={styles.pendingText}>
+            {progress !== null ? `${Math.round(progress * 100)}% downloaded` : 'Starting'}
+            {part}
+          </p>
+        </div>
+      ) : (
+        <div className={styles.pendingInfo}>
+          <CloudOff size={22} aria-hidden="true" />
+          <p className={styles.pendingTitle}>The video wasn’t downloaded</p>
+          <p className={styles.pendingNote}>
+            See the court view for what happened, then try again or choose another video.
+          </p>
+        </div>
       )}
     </div>
   )

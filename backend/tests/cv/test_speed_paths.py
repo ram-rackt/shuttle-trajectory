@@ -6,7 +6,7 @@ import pytest
 
 from rallycv import tracknet
 from rallycv.court import CourtCalibration
-from rallycv.pipeline import player_region
+from rallycv.pipeline import nearest_gap, player_region
 from rallycv.players import PlayerObservation, PlayerTracks, input_size
 from rallycv.synthetic import broadcast_camera, court_homography
 
@@ -85,6 +85,23 @@ def test_player_boxes_are_interpolated_between_detections() -> None:
     assert tracks.box_at("A", 2, max_frame_gap=8) == pytest.approx([2, 0, 12, 20])
     assert tracks.box_at("A", 20, max_frame_gap=8) is None  # too far from any detection
     assert tracks.box_at("B", 2, max_frame_gap=8) is None
+    # Lookups follow observations added later (their arrays are cached).
+    tracks.observations["A"].append(
+        PlayerObservation(24, np.ones(2), np.array([24.0, 0, 34, 20]), 0.9)
+    )
+    assert tracks.box_at("A", 20, max_frame_gap=16) == pytest.approx([20, 0, 30, 20])
+    assert tracks.position_at("A", 24) == pytest.approx([1, 1])
+
+
+def test_nearest_gap_matches_comparing_every_pair() -> None:
+    """The sorted lookup that replaced an (outputs x observations) matrix, which
+    for an 11-minute analysis took hundreds of MB."""
+    rng = np.random.default_rng(0)
+    times = np.sort(rng.uniform(0, 60, 300))
+    queries = np.arange(-1, 61, 1 / 15)
+    brute = np.min(np.abs(times[None, :] - queries[:, None]), axis=1)
+    assert nearest_gap(times, queries) == pytest.approx(brute)
+    assert nearest_gap(np.array([5.0]), np.array([0.0, 5.0, 7.0])) == pytest.approx([5, 0, 2])
 
 
 def test_detector_input_keeps_the_aspect_ratio() -> None:

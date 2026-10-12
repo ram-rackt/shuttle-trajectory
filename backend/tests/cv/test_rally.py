@@ -98,7 +98,7 @@ def synth_rally() -> tuple[ShuttleTrack, PlayerTracks, list[float]]:
 @pytest.fixture(scope="module")
 def rally_data():
     track, players, truth = synth_rally()
-    rallies = detect_rallies(track, players, CAL, FPS, 1920)
+    rallies = detect_rallies(track, players, CAL, FPS, 1920, camera=CAM)
     return track, players, truth, rallies
 
 
@@ -187,6 +187,79 @@ def test_rallies_never_span_a_hard_cut() -> None:
         assert r.served
         assert [h.player for h in r.hits] == [f.hitter for f in FLIGHTS]
     assert rallies[1].hits[0].frame / FPS == pytest.approx(truth[0] + n / FPS, abs=0.15)
+
+
+def test_window_starting_right_at_a_hit_has_no_serve() -> None:
+    """A window of a longer video (e.g. part of a YouTube match) that starts
+    mid-rally, just before B's clear. The frames before it were never analysed,
+    so the hit can't be a serve, any more than at the start of a clip."""
+    track, players, truth = synth_rally()
+    start = int(round(truth[1] * FPS)) - 3
+    xy = track.xy.copy()
+    xy[:start] = np.nan
+    windowed = PlayerTracks()
+    for pid, obs in _shift(players, 0, start=start):
+        windowed.observations[pid] = obs
+    rallies = detect_rallies(
+        ShuttleTrack(frames=track.frames, xy=xy), windowed, CAL, FPS, 1920, start_frame=start
+    )
+    assert len(rallies) == 1
+    assert not rallies[0].served
+    assert [h.player for h in rallies[0].hits] == [f.hitter for f in FLIGHTS[1:]]
+
+
+def test_serve_just_after_a_cut_is_kept_but_not_at_the_video_start() -> None:
+    """Highlight reels cut in just before the serve (0.23-0.33 s before it in
+    real footage): that is still a serve. At the start of the analysed video,
+    a hit that soon can't be told from one in mid-rally."""
+    from rallycv.shots import _assemble_rallies, _Event
+
+    track = ShuttleTrack(frames=np.arange(400), xy=np.full((400, 2), np.nan))
+    hits = [_Event(210.0, "hit", "A", 1.0), _Event(250.0, "hit", "B", 1.0)]  # 0.33 s in
+    (after_cut,) = _assemble_rallies(hits, [], track, FPS, seg_start=200.0, starts_video=False)
+    assert after_cut.served
+    (at_start,) = _assemble_rallies(hits, [], track, FPS, seg_start=200.0)
+    assert not at_start.served
+
+
+def test_a_serve_needs_half_a_second_after_the_previous_rally() -> None:
+    """Play restarting sooner than that after a rally ended (e.g. a replay
+    cutting in mid-rally) is play carrying on, not a serve."""
+    from rallycv.shots import MIN_SERVE_GAP_SEC, Hit, Rally, _require_serve_gap
+
+    def rally(first_hit: float, end: float) -> Rally:
+        return Rally([Hit(first_hit, "A", 1.0), Hit(first_hit + 30, "B", 1.0)], end, True)
+
+    gap = MIN_SERVE_GAP_SEC * FPS
+    first = rally(0.0, 100.0)
+    too_soon = rally(100.0 + gap - 3, 200.0)  # just under 0.5 s after the first ended
+    in_time = rally(200.0 + gap + 3, 300.0)  # just over 0.5 s after the second ended
+    rallies = [first, too_soon, in_time]
+    _require_serve_gap(rallies, FPS)
+    assert [r.served for r in rallies] == [True, False, True]
+
+
+def test_a_landing_long_after_the_last_hit_does_not_end_that_rally() -> None:
+    """The rally's real landing was missed; 12 s later the shuttle, tossed back
+    in dead time, settles on the floor. That isn't how the rally ended: its
+    last shot must not stretch over the dead time."""
+    from rallycv.shots import RALLY_BREAK_SEC, _assemble_rallies, _Event
+
+    # The shuttle stays in view throughout (carried around between rallies).
+    track = ShuttleTrack(frames=np.arange(900), xy=np.zeros((900, 2)))
+    rally = [_Event(30.0, "hit", "A", 1.0), _Event(70.0, "hit", "B", 1.0)]
+    rally.append(_Event(110.0, "hit", "A", 1.0))
+    toss = 110.0 + 12 * FPS
+    longest = 110.0 + RALLY_BREAK_SEC * FPS
+
+    # Closed by the far landing before the next rally's hit...
+    first, second = _assemble_rallies([*rally, _Event(800.0, "hit", "B", 1.0)], [toss], track, FPS)
+    assert [h.frame for h in first.hits] == [30.0, 70.0, 110.0]
+    assert not first.landed and first.end_frame <= longest
+    assert second.hits[0].frame == 800.0
+    # ...or as the clip's last rally.
+    (only,) = _assemble_rallies(rally, [toss], track, FPS)
+    assert not only.landed and only.end_frame <= longest
 
 
 def test_ambiguous_hit_is_resolved_by_alternation() -> None:
@@ -296,3 +369,75 @@ def test_hard_cuts_found_from_frame_changes() -> None:
     changes[40] = (80, 8000)  # the whole picture changes at once
     changes[200] = (400, 2300)  # a fast player near the camera: not a cut
     assert find_cuts(changes) == [80]
+
+
+def test_a_normal_landing_is_not_mistaken_for_the_net(rally_data) -> None:
+    _, _, _, rallies = rally_data
+    assert rallies[0].net_point is None and rallies[0].landed
+
+
+def test_shot_into_the_net_ends_the_rally_without_a_phantom_hit() -> None:
+    """A's last shot strikes the net, stops and drops. Before net detection the
+    stop-and-drop read as a direction change near B: a 'B drive' that never was."""
+    track, players, truth = synth_rally()
+    xy = track.xy.copy()
+    f_hit = int(round(truth[-1] * FPS))
+    contact = np.array([1.5, 2.0, 2.2])  # A smashes from the back of the court
+    at_net = np.array([2.0, cm.NET_Y, 1.2])  # ...into the net, below the tape
+    on_floor = np.array([2.0, cm.NET_Y - 0.15, 0.0])
+    n_fly, n_drop = int(0.35 * FPS), int(0.5 * FPS)
+    xy[f_hit:] = np.nan
+    for k in range(n_fly + 1):
+        u = k / n_fly
+        xy[f_hit + k] = CAM.project((contact + (at_net - contact) * u)[None])[0]
+    for k in range(1, n_drop + 1):
+        u = (k / n_drop) ** 2  # falls, accelerating from rest
+        xy[f_hit + n_fly + k] = CAM.project((at_net + (on_floor - at_net) * u)[None])[0]
+    rest = f_hit + n_fly + n_drop
+    xy[rest : rest + int(0.6 * FPS)] = xy[rest]
+    into_net = ShuttleTrack(frames=track.frames, xy=xy)
+
+    rallies = detect_rallies(into_net, players, CAL, FPS, 1920, camera=CAM)
+    assert len(rallies) == 1
+    rally = rallies[0]
+    assert [h.player for h in rally.hits] == [f.hitter for f in FLIGHTS]  # no extra hit
+    assert rally.net_point is not None and not rally.landed
+    assert rally.net_point == pytest.approx([2.0, cm.NET_Y], abs=0.3)
+    assert rally.end_frame / FPS == pytest.approx(truth[-1] + 0.35, abs=0.15)
+
+    # The court view ends the shot at the net, and says so.
+    traj = map_rallies(rallies, into_net, players, CAL, CAM, FPS)
+    assert traj.flights[-1].outcome == "net"
+    assert traj.flights[-1].end == pytest.approx([2.0, cm.NET_Y], abs=0.3)
+    assert all(fl.outcome is None for fl in traj.flights[:-1])
+
+
+def test_a_momentary_pause_near_the_net_is_not_a_net_contact(monkeypatch) -> None:
+    """A shot that seems to stop for a frame or two near the net (a jittery or
+    repeated detection) but then flies on at full speed did not strike the net.
+    Seen on a re-encoded copy of a real clip: the false contact ended the rally
+    after B's net shot and turned the rest into a new rally with a 'serve'."""
+    from rallycv import shots
+
+    start = np.array([3.0, cm.NET_Y + 2.0, 1.6])  # B plays it towards A...
+    end = np.array([2.8, cm.NET_Y - 2.0, 0.0])
+    n, k_net, pause = 18, 9, 2
+    pts = [start + (end - start) * k / n for k in range(n + 1)]
+    pts = pts[: k_net + 1] + [pts[k_net]] * pause + pts[k_net + 1 :]  # ...stalling at the net
+    xy = np.full((60, 2), np.nan)
+    xy[10 : 10 + len(pts)] = CAM.project(np.array(pts))
+    track = ShuttleTrack(frames=np.arange(60), xy=xy)
+
+    # Every other sign of a net contact is there: it arrives fast, stops, drops...
+    monkeypatch.setattr(shots, "_stays_slow", lambda *args: True)
+    assert len(shots._net_contacts(track, CAM, FPS, 1.0)) == 1
+    # ...but it doesn't stay slow.
+    monkeypatch.undo()
+    assert shots._net_contacts(track, CAM, FPS, 1.0) == []
+
+
+def test_net_contacts_need_the_3d_camera() -> None:
+    from rallycv.shots import _net_contacts
+
+    track, _, _ = synth_rally()
+    assert _net_contacts(track, None, FPS, 1.0) == []

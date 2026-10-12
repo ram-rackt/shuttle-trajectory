@@ -44,6 +44,14 @@ its licence.
 Paper: Lv, W., et al. (2024). RT-DETRv2: Improved Baseline with Bag-of-Freebies
 for Real-Time Detection Transformer.
 
+## yt-dlp (YouTube downloads) — Unlicense
+
+YouTube links are downloaded with yt-dlp (https://github.com/yt-dlp/yt-dlp),
+released into the public domain under the Unlicense. It is an optional
+dependency (`backend[youtube]`), installed from PyPI, not distributed with this
+project. Videos downloaded with it remain subject to YouTube's terms of service
+and to the rights of whoever owns the footage.
+
 ## Sample footage (not distributed)
 
 `backend/data/samples/` (git-ignored) holds clips used for manual testing,

@@ -77,4 +77,4 @@ def test_serialises_with_camel_case_keys() -> None:
         "calibration",
     } == set(data)
     assert data["source"] == "mock"
-    assert {"index", "hitter", "type", "startTime", "endTime"} == set(data["shots"][0])
+    assert {"index", "hitter", "type", "startTime", "endTime", "outcome"} == set(data["shots"][0])

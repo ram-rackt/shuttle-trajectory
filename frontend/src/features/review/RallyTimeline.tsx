@@ -13,7 +13,7 @@ import {
   shotSeekTime,
   type RallySpan,
 } from '../court/sampling'
-import { SHOT_TYPE_LABEL } from '../court/shotLabels'
+import { describeShot, SHOT_TYPE_LABEL } from '../court/shotLabels'
 import styles from './RallyTimeline.module.css'
 
 const ARROW_STEP_SEC = 1
@@ -262,10 +262,15 @@ function ShotList({ shots, rallies, active, disabled, onSeek }: ShotListProps) {
                       aria-current={i === active ? 'true' : undefined}
                       disabled={disabled}
                       onClick={() => onSeek(shotSeekTime(shot))}
-                      title={`Jump to ${multi ? `rally ${rally.index + 1}, ` : ''}shot ${k + 1} (${formatTime(shot.startTime)})`}
+                      title={`Jump to ${multi ? `rally ${rally.index + 1}, ` : ''}shot ${k + 1}: ${describeShot(shot)} (${formatTime(shot.startTime)})`}
                     >
                       <span className={styles.chipNumber}>{k + 1}</span>
                       <span className={styles.chipType}>{SHOT_TYPE_LABEL[shot.type]}</span>
+                      {shot.outcome === 'net' && (
+                        <span className={styles.chipOutcome} title="This shot ended in the net">
+                          Net
+                        </span>
+                      )}
                       <span className={styles.chipHitter} aria-label={`by Player ${shot.hitter}`}>
                         {shot.hitter}
                       </span>

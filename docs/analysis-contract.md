@@ -1,12 +1,14 @@
-# Analysis contract (schema v1, draft)
+# Analysis contract (schema v1)
 
 The data the frontend needs to render one analysed rally. Source of truth for
 the frontend: [`frontend/src/types/analysis.ts`](../frontend/src/types/analysis.ts).
 Backend mirror: [`backend/app/analysis/contract.py`](../backend/app/analysis/contract.py)
 (Pydantic). Keep the two in sync; the backend tests check the camelCase wire format.
 
-This is a draft. It will be refined in Phases 3–5 as the mock and the
-visualization exercise it.
+Version 1 is what both the mock and the CV pipeline produce today. Fields have
+only been added since (`calibration`, shuttle `image`/`height`, shot `outcome`),
+all optional, so older results still parse; a breaking change would bump
+`schemaVersion`.
 
 ## Coordinate system
 
@@ -51,12 +53,16 @@ PlayerTrack   { id: 'A' | 'B', label: string, samples: { t, position }[] }
 ShuttleSample { t, position: { x, y } | null,   // floor position; null = unknown
                 image?: { x, y } | null,       // where it was detected in the video frame
                 height?: number | null }       // metres, when reconstructed
-Shot          { index, hitter: 'A' | 'B', type, startTime, endTime }
+Shot          { index, hitter: 'A' | 'B', type, startTime, endTime,
+                outcome?: 'net' | 'landed' | null }  // how a rally-ending shot ended
 ShotType      'serve' | 'clear' | 'drop' | 'smash' | 'drive' | 'net' | 'lift' | 'unknown'
 ```
 
 All times are seconds from the start of the video, so the UI can look up state
-directly from `video.currentTime`.
+directly from `video.currentTime`. That holds when only part of a video was
+analysed (a window of a long YouTube video): times are still measured from the
+start of the file, and there is simply no data outside the window.
+`durationSec` is the length of the whole file.
 
 ## Design notes
 
@@ -65,7 +71,8 @@ directly from `video.currentTime`.
 - Samples need not be at a fixed rate. The UI interpolates between samples.
 - Doubles (four players) would extend `PlayerId`; not in scope for v1.
 - A clip may contain several rallies: each seen from its start begins with a
-  `serve` shot (a rally already in progress when the clip starts has none), and
+  `serve` shot (a rally already in progress when the clip or the analysed
+  window starts has none), and
   there are no shots during dead time between them.
 - For CV output, floor positions mid-flight are estimates (a single camera
   can't measure height); `image` is what was actually detected.

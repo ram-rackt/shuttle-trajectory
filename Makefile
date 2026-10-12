@@ -10,7 +10,7 @@ setup-frontend:
 
 setup-backend:
 	python3 -m venv $(VENV)
-	$(PY) -m pip install -e 'backend[dev,cv]'
+	$(PY) -m pip install -e 'backend[dev,cv,youtube]'
 	$(MAKE) models
 
 # RT-DETRv2 + TrackNetV3 weights into backend/data/models (git-ignored).

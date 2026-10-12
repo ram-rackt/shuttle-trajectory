@@ -9,7 +9,7 @@ import type { AnalysisState } from '../analysis/useAnalysis'
 import styles from './CourtPanel.module.css'
 import { CourtView } from './CourtView'
 import { groupRallies, rallyOfShot, shotIndexAt } from './sampling'
-import { SHOT_TYPE_LABEL } from './shotLabels'
+import { describeShot } from './shotLabels'
 
 interface CourtPanelProps {
   analysis: AnalysisState
@@ -141,7 +141,7 @@ function ShotSummary({ result, time }: { result: RallyAnalysis | null; time: num
       value:
         shot && rally ? `${index! - rally.first + 1} / ${rally.last - rally.first + 1}` : '—',
     },
-    { label: 'Type', value: shot ? SHOT_TYPE_LABEL[shot.type] : '—' },
+    { label: 'Type', value: shot ? describeShot(shot) : '—' },
     { label: 'Hitter', value: shot ? `Player ${shot.hitter}` : '—' },
   ]
   return (

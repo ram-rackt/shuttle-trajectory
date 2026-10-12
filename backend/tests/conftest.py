@@ -11,7 +11,10 @@ from app.main import create_app
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        data_dir=tmp_path, max_upload_bytes=1024 * 1024, analyzer="mock", mock_stage_seconds=0
+        storage_dir=tmp_path / "storage",
+        max_upload_bytes=1024 * 1024,
+        analyzer="mock",
+        mock_stage_seconds=0,
     )
 
 

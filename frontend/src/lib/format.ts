@@ -21,3 +21,18 @@ export function formatBytes(bytes: number): string {
 export function formatRate(rate: number): string {
   return `${rate}×`
 }
+
+/**
+ * Parses a time typed by a person: "83", "1:23", "1:02:03" or with decimals
+ * ("1:23.5"). Returns seconds, or null if it isn't a valid time.
+ */
+export function parseTimecode(text: string): number | null {
+  const parts = text.trim().split(':')
+  if (parts.length === 0 || parts.length > 3 || parts.some((p) => !/^\d+(\.\d+)?$/.test(p))) {
+    return null
+  }
+  const nums = parts.map(Number)
+  // Minutes and seconds after the first field must be below 60 ("1:75" is a typo).
+  if (nums.slice(1).some((n) => n >= 60)) return null
+  return nums.reduce((total, n) => total * 60 + n, 0)
+}

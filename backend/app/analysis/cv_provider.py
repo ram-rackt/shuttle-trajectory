@@ -2,7 +2,8 @@
 
 import logging
 import threading
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -25,12 +26,26 @@ logger = logging.getLogger(__name__)
 class CVAnalysisProvider:
     """Real analysis: court detection, player and shuttle tracking, shot detection."""
 
-    def __init__(self, models_dir: Path, person_model: str, device: str | None = None) -> None:
+    def __init__(
+        self,
+        models_dir: Path,
+        person_model: str,
+        device: str | None = None,
+        max_duration_sec: float = 660.0,
+    ) -> None:
         self._models_dir = models_dir
+        self._max_duration_sec = max_duration_sec
         self._person_model = person_model
         self._device = device
         self._detector = None
         self._lock = threading.Lock()  # one analysis at a time: models are not thread-safe
+
+    @property
+    def version(self) -> str:
+        """Cached results are reused only from the same pipeline and models."""
+        from rallycv.pipeline import PIPELINE_VERSION
+
+        return f"cv-{PIPELINE_VERSION}-{self._person_model}"
 
     @property
     def stages(self) -> Sequence[str]:
@@ -47,13 +62,49 @@ class CVAnalysisProvider:
             )
         return self._detector
 
-    def analyze(self, request: AnalysisRequest, on_progress: ProgressCallback) -> RallyAnalysis:
+    def _config(self, request: AnalysisRequest):  # noqa: ANN202 - rallycv imported lazily
         from rallycv import pipeline
 
-        config = pipeline.PipelineConfig(
+        return pipeline.PipelineConfig(
             tracknet_weights=self._models_dir / "ckpts" / "TrackNet_best.pt",
             device=self._device,
+            max_duration_sec=self._max_duration_sec,
+            start_sec=request.start_sec,
+            end_sec=request.end_sec,
         )
+
+    def warm_up(self, request: AnalysisRequest, should_stop: Callable[[], bool]) -> None:
+        """Caches the shuttle detections for this video while nothing else needs
+        the models (see rallycv.pipeline.warm_scan). Returns early once
+        `should_stop()` is True."""
+        from rallycv import pipeline
+        from rallycv.cache import StageCache
+
+        if request.cache_dir is None:
+            return
+        with self._lock:
+            if should_stop():
+                return
+            started = time.monotonic()
+            done = pipeline.warm_scan(
+                request.video_path,
+                self._config(request),
+                StageCache(request.cache_dir),
+                should_stop,
+            )
+            logger.info(
+                "Warm-up of %s %s after %.0f s",
+                request.video_path.name,
+                "finished" if done else "stopped",
+                time.monotonic() - started,
+            )
+
+    def analyze(self, request: AnalysisRequest, on_progress: ProgressCallback) -> RallyAnalysis:
+        from rallycv import pipeline
+        from rallycv.cache import StageCache
+
+        config = self._config(request)
+        cache = StageCache(request.cache_dir) if request.cache_dir is not None else None
         with self._lock:
             try:
                 result = pipeline.run(
@@ -62,6 +113,7 @@ class CVAnalysisProvider:
                     on_progress=on_progress,
                     court_corners=request.court_corners,
                     config=config,
+                    cache=cache,
                 )
             except pipeline.PipelineError as e:
                 raise AnalysisError(e.code, e.message) from e
@@ -120,6 +172,7 @@ def to_contract(result) -> RallyAnalysis:  # noqa: ANN001 - rallycv.pipeline.Ral
             type=s.type,  # type: ignore[arg-type]
             start_time=round(s.start_time, 3),
             end_time=round(s.end_time, 3),
+            outcome=s.outcome,  # type: ignore[arg-type]
         )
         for s in result.shots
     ]

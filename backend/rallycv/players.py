@@ -75,6 +75,8 @@ class RtDetrPersonDetector:
         self._model = load(RTDetrV2ForObjectDetection).to(self._device)
         self._model.eval()
         self._person_label = person_label_id(self._model.config.id2label, model_id)
+        self.cache_id = f"rtdetr:{model_id}:{conf}:{DETECT_LONG_SIDE}"
+        """Identifies this detector's output for the stage cache."""
 
     def detect(self, frame_bgr: np.ndarray) -> np.ndarray:
         import cv2
@@ -148,6 +150,22 @@ class PlayerTracks:
     observations: dict[str, list[PlayerObservation]] = field(
         default_factory=lambda: {"A": [], "B": []}
     )
+    _arrays: dict[str, tuple[tuple[int, int], np.ndarray, np.ndarray]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    def _frames_and_feet(self, player: str) -> tuple[np.ndarray, np.ndarray]:
+        """Observation frames (N,) and feet (N, 2) as arrays, rebuilt only when
+        the observations change (lookups run for every candidate hit frame)."""
+        obs = self.observations[player]
+        version = (id(obs), len(obs))
+        cached = self._arrays.get(player)
+        if cached is None or cached[0] != version:
+            frames = np.array([o.frame for o in obs], dtype=np.float64)
+            feet = np.array([o.feet_court for o in obs], dtype=np.float64).reshape(-1, 2)
+            cached = (version, frames, feet)
+            self._arrays[player] = cached
+        return cached[1], cached[2]
 
     def box_at(self, player: str, frame: float, max_frame_gap: int) -> np.ndarray | None:
         """The player's box at `frame`: interpolated between the observations on
@@ -156,7 +174,7 @@ class PlayerTracks:
         obs = self.observations[player]
         if not obs:
             return None
-        frames = np.array([o.frame for o in obs], dtype=np.float64)
+        frames, _ = self._frames_and_feet(player)
         j = int(np.searchsorted(frames, frame))
         if 0 < j < len(obs):
             f0, f1 = frames[j - 1], frames[j]
@@ -168,13 +186,12 @@ class PlayerTracks:
 
     def position_at(self, player: str, t_frame: float) -> np.ndarray | None:
         """Interpolated floor position (metres) at a (fractional) frame index."""
-        obs = self.observations[player]
-        if not obs:
+        if not self.observations[player]:
             return None
-        frames = np.array([o.frame for o in obs], dtype=np.float64)
-        xs = np.array([o.feet_court[0] for o in obs])
-        ys = np.array([o.feet_court[1] for o in obs])
-        return np.array([np.interp(t_frame, frames, xs), np.interp(t_frame, frames, ys)])
+        frames, feet = self._frames_and_feet(player)
+        return np.array(
+            [np.interp(t_frame, frames, feet[:, 0]), np.interp(t_frame, frames, feet[:, 1])]
+        )
 
 
 class PlayerTracker:

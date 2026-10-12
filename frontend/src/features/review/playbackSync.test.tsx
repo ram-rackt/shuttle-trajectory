@@ -54,7 +54,7 @@ const RALLY: RallyAnalysis = {
   shots: [
     { index: 0, hitter: 'A', type: 'serve', startTime: 1, endTime: 2 },
     { index: 1, hitter: 'B', type: 'clear', startTime: 2, endTime: 3 },
-    { index: 2, hitter: 'A', type: 'smash', startTime: 3, endTime: 4 },
+    { index: 2, hitter: 'A', type: 'smash', startTime: 3, endTime: 4, outcome: 'net' },
   ],
 }
 
@@ -176,6 +176,15 @@ describe('playback sync', () => {
     fireEvent.keyDown(track, { key: 'End' })
     expect(video.currentTime).toBe(6)
     expect(track).toHaveAttribute('aria-valuetext', expect.stringContaining('shot 3: Smash'))
+  })
+
+  it('shows when a shot ended in the net', async () => {
+    const { court, timeline, video } = await renderReadyRally()
+    const smash = within(timeline).getByRole('button', { name: /Smash/ })
+    expect(smash).toHaveTextContent('Net')
+    expect(within(timeline).getByRole('button', { name: /Clear/ })).not.toHaveTextContent('Net')
+    setTime(video, 3.5)
+    expect(shotSummary(court)).toHaveTextContent('TypeSmash · into the net')
   })
 
   describe('playback speed', () => {

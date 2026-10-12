@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import court_model as cm
+from .camera import Camera, intersect_vertical_plane
 from .court import CourtCalibration
 from .players import PlayerTracks
 from .shuttle import ShuttleTrack
@@ -31,7 +32,9 @@ MIN_SHOT_SEC = 0.3
 DEAD_TIME_SEC = 1.2
 """After a landing, shuttle movement this soon is players handing the shuttle back."""
 RALLY_BREAK_SEC = 3.0
-"""No hit for this long ends a rally even without a detected landing."""
+"""No hit for this long ends a rally even without a detected landing. It also
+bounds the rally's last shot: a landing (or net contact) longer than this after
+the last hit is dead time, e.g. the shuttle tossed back after an unseen landing."""
 BOUNCE_WINDOW_SEC = 0.25
 """Direction changes this close to a landing are the shuttle bouncing, not a hit."""
 MAX_REACH = 0.8
@@ -46,6 +49,21 @@ UNREACHABLE_COST = 2.0
 """Attribution cost when a player's box is unknown or far from the shuttle."""
 SERVE_LOOKBACK_SEC = 0.8
 """A serve needs this long (or the whole rally window) without the shuttle in flight."""
+MIN_SERVE_GAP_SEC = 0.5
+"""A serve comes at least this long after the previous rally ended (1.3 s or more
+in real footage, even in highlight reels). Play that seems to restart sooner is
+play carrying on, e.g. a replay cutting in mid-rally, so it isn't a serve."""
+NET_STALL_MAX_SPEED = 6.0
+"""px per 1/60 s at 1080p: after striking the net the shuttle all but stops."""
+NET_ARRIVAL_MIN_SPEED = 4.0
+"""px per 1/60 s at 1080p: it was in flight when it got there (a soft shot into
+the net arrives slowly, but a shuttle lying on the floor does not move at all)."""
+NET_LEAD_SEC = 0.1
+"""No racket contact this close before the shuttle meets the net."""
+NET_SETTLE_SEC = 0.25
+"""After striking the net the shuttle stays slow at least this long (it hangs in
+the net or drops from tape height). A shot that only seems to pause for a frame
+or two (a jittery or repeated detection) flies on at full speed straight after."""
 
 
 @dataclass
@@ -63,6 +81,8 @@ class Rally:
     landed: bool
     served: bool = True
     """Whether the first hit is a serve (False when the clip starts mid-rally)."""
+    net_point: np.ndarray | None = None
+    """Where the last shot struck the net, floor (X, Y) metres, if it ended there."""
 
 
 # --------------------------------------------------------------------------- #
@@ -129,6 +149,9 @@ class _Event:
     strength: float
     costs: dict[str, float] = field(default_factory=dict)
     """Per-player attribution cost (see _reach_costs)."""
+    rest_frame: float | None = None
+    """Landings: when the shuttle was first seen at rest (`frame` is the earlier
+    moment it is judged to have touched down)."""
 
 
 def _hit_event(frame: float, strength: float, costs: dict[str, float]) -> _Event:
@@ -185,12 +208,17 @@ def _cusp_events(
 
 
 def _gap_events(
-    track: ShuttleTrack, players: PlayerTracks, fps: float, px_scale: float = 1.0
+    track: ShuttleTrack,
+    players: PlayerTracks,
+    fps: float,
+    px_scale: float = 1.0,
+    start_frame: float = 0.0,
 ) -> list[_Event]:
     """A run that starts next to a player after a gap: the hit happened in the gap.
 
     The shuttle must leave quickly; one lying or rolling on the floor (or being
-    picked up after the point) is not a hit.
+    picked up after the point) is not a hit. The first run's gap is counted from
+    `start_frame`, where the analysed video begins.
     """
     events: list[_Event] = []
     max_gap = int(fps * 0.25)
@@ -198,7 +226,7 @@ def _gap_events(
     min_flight_speed = 6.0 * px_scale * (60 / fps)
     runs = [r for r in _runs(track.visible()) if r[1] - r[0] >= 3]
     for k, (s, e) in enumerate(runs):
-        gap = s - runs[k - 1][1] if k > 0 else s
+        gap = s - (runs[k - 1][1] if k > 0 else start_frame)
         if gap < 0.12 * fps:
             continue
         n = min(w, e - s)
@@ -211,6 +239,73 @@ def _gap_events(
         lead = min(gap / 2, 0.1 * fps)
         events.append(_hit_event(float(s - lead), 0.6 - reach, costs))
     return events
+
+
+def _net_contacts(
+    track: ShuttleTrack, camera: Camera | None, fps: float, px_scale: float
+) -> list[tuple[float, np.ndarray]]:
+    """The shuttle striking the net: (frame, floor point on the net line).
+
+    In flight, on the plane of the net and below its tape, the shuttle all but
+    stops and then drops. A racket does the opposite: the shuttle leaves fast.
+    Needs the 3D camera (to place the shuttle on the net plane); without one,
+    nothing is reported.
+    """
+    if camera is None:
+        return []
+    xy = track.xy
+    w = max(2, round(0.08 * fps))
+    settle = max(w + 1, round(NET_SETTLE_SEC * fps))
+    per_frame = px_scale * (60 / fps)
+    found: list[tuple[float, np.ndarray]] = []
+    last = -np.inf
+    # Nothing before the first detection can qualify (e.g. a window late in a long video).
+    for i in range(_first_seen(track) + w, len(xy) - w):
+        before, at, after = xy[i - w], xy[i], xy[i + w]
+        if not (np.isfinite(before).all() and np.isfinite(at).all() and np.isfinite(after).all()):
+            continue
+        v_in = np.linalg.norm(at - before) / w
+        v_out = np.linalg.norm(after - at) / w
+        if v_out >= NET_STALL_MAX_SPEED * per_frame or v_in < NET_ARRIVAL_MIN_SPEED * per_frame:
+            continue
+        if v_in < 2.5 * max(v_out, 0.5 * per_frame):
+            continue
+        later = xy[min(i + 3 * w, len(xy) - 1)]
+        if not np.isfinite(later).all():
+            later = after
+        dx, dy = later - at
+        if not (dy > 0 and dy >= abs(dx)):
+            continue  # it must drop, not fly on
+        if not _stays_slow(xy, i, settle, NET_STALL_MAX_SPEED * per_frame):
+            continue
+        pt, _ = intersect_vertical_plane(
+            camera, at[None], np.array([0.0, cm.NET_Y]), np.array([cm.WIDTH, cm.NET_Y])
+        )
+        x, _, z = pt[0]
+        if not (-0.3 <= x <= cm.WIDTH + 0.3 and 0 <= z <= cm.NET_HEIGHT_POSTS + 0.15):
+            continue
+        if i - last > 0.5 * fps:  # first frame of each contact
+            found.append((float(i), np.array([float(np.clip(x, 0, cm.WIDTH)), cm.NET_Y])))
+        last = i
+    return found
+
+
+def _first_seen(track: ShuttleTrack) -> int:
+    """First frame with a detection (the track's length if there is none)."""
+    seen = np.flatnonzero(track.visible())
+    return int(seen[0]) if len(seen) else len(track.xy)
+
+
+def _stays_slow(xy: np.ndarray, i: int, frames: int, max_speed: float) -> bool:
+    """Whether the shuttle, from frame i, covers less than max_speed px per frame
+    on average over the next `frames` frames (judged from the last detection in
+    that span; with no later detection there is nothing against it)."""
+    seg = xy[i + 1 : i + frames + 1]
+    seen = np.flatnonzero(np.isfinite(seg).all(axis=1))
+    if len(seen) == 0:
+        return True
+    j = int(seen[-1])
+    return float(np.linalg.norm(seg[j] - xy[i])) / (j + 1) < max_speed
 
 
 def _landing_events(
@@ -228,7 +323,7 @@ def _landing_events(
     drop_px = 40 * px_scale
     lookback = round(0.6 * fps)
     xy = track.xy
-    i = 0
+    i = _first_seen(track)
     n = len(xy)
     while i + still_frames <= n:
         window = xy[i : i + still_frames]
@@ -251,7 +346,7 @@ def _landing_events(
             seg = xy[max(0, i - lookback) : i + 1]
             ys = np.where(np.isnan(seg[:, 1]), -np.inf, seg[:, 1])
             first_contact = max(0, i - lookback) + int(np.argmax(ys))
-            events.append(_Event(float(first_contact), "landing", None, 1.0))
+            events.append(_Event(float(first_contact), "landing", None, 1.0, rest_frame=float(i)))
             # Skip past this resting stretch.
             j = i + still_frames
             while j < n and not np.isnan(xy[j, 1]) and abs(xy[j, 1] - window[-1, 1]) < still_px:
@@ -274,9 +369,13 @@ def detect_rallies(
     fps: float,
     image_width: int,
     cuts: Sequence[float] = (),
+    camera: Camera | None = None,
+    start_frame: float = 0.0,
 ) -> list[Rally]:
     """Rallies in the clip. `cuts` are frames where the video jumps (edited
-    footage); play never continues across a cut."""
+    footage); play never continues across a cut. With a 3D `camera`, a shot
+    into the net is recognised and ends the rally. `start_frame` is where the
+    analysed part of the video begins (nothing before it was looked at)."""
     px_scale = image_width / 1920
     visible = track.visible()
     if visible.sum() < 3:
@@ -284,24 +383,63 @@ def detect_rallies(
 
     events = (
         _cusp_events(track, players, fps, px_scale)
-        + _gap_events(track, players, fps, px_scale)
+        + _gap_events(track, players, fps, px_scale, start_frame)
         + _landing_events(track, calibration, fps, px_scale)
     )
-    landings = sorted(e.frame for e in events if e.kind == "landing")
-    # The bounce of a landing changes direction too; it is not a hit.
+    nets = _net_contacts(track, camera, fps, px_scale)
+    # The shuttle stalling against the net, then lying under it, looks "at rest"
+    # too: that is part of the net contact, not a separate landing. Judge by when
+    # it came to rest (the touch-down frame is traced back and can land on the hit).
+    landings = sorted(
+        e.frame
+        for e in events
+        if e.kind == "landing"
+        and not any(
+            f - NET_LEAD_SEC * fps <= (e.rest_frame or e.frame) <= f + DEAD_TIME_SEC * fps
+            for f, _ in nets
+        )
+    )
+    # The bounce of a landing changes direction too; it is not a hit. Nor is
+    # the shuttle stopping in the net, or anything until play restarts.
     bounce = BOUNCE_WINDOW_SEC * fps
     hit_events = [
-        e for e in events if e.kind == "hit" and all(abs(e.frame - f) > bounce for f in landings)
+        e
+        for e in events
+        if e.kind == "hit"
+        and all(abs(e.frame - f) > bounce for f in landings)
+        and not any(f - NET_LEAD_SEC * fps <= e.frame <= f + DEAD_TIME_SEC * fps for f, _ in nets)
     ]
     hits = _suppress(hit_events, MIN_SHOT_SEC * fps)
 
     rallies: list[Rally] = []
-    bounds = [0.0, *sorted(c for c in cuts if 0 < c < len(track.xy)), float(len(track.xy))]
+    # Stretches of continuous video: from where analysis starts, split at each cut.
+    n = float(len(track.xy))
+    bounds = [float(start_frame), *sorted(c for c in cuts if start_frame < c < n), n]
     for start, end in zip(bounds, bounds[1:], strict=False):
         seg_hits = [h for h in hits if start <= h.frame < end]
         seg_landings = [f for f in landings if start <= f < end]
-        rallies += _assemble_rallies(seg_hits, seg_landings, track, fps, start, end, px_scale)
+        seg_nets = {f: p for f, p in nets if start <= f < end}
+        rallies += _assemble_rallies(
+            seg_hits,
+            seg_landings,
+            track,
+            fps,
+            start,
+            end,
+            px_scale,
+            seg_nets,
+            starts_video=start == bounds[0],
+        )
+    _require_serve_gap(rallies, fps)
     return rallies
+
+
+def _require_serve_gap(rallies: list[Rally], fps: float) -> None:
+    """Unmarks serves that come less than MIN_SERVE_GAP_SEC after the previous
+    rally ended (rallies in time order, across cuts too)."""
+    for prev, rally in zip(rallies, rallies[1:], strict=False):
+        if rally.served and rally.hits[0].frame - prev.end_frame < MIN_SERVE_GAP_SEC * fps:
+            rally.served = False
 
 
 def _assemble_rallies(
@@ -312,10 +450,23 @@ def _assemble_rallies(
     seg_start: float = 0.0,
     seg_end: float | None = None,
     px_scale: float = 1.0,
+    net_contacts: dict[float, np.ndarray] | None = None,
+    starts_video: bool = True,
 ) -> list[Rally]:
     """Groups time-ordered hits of one continuous stretch of video into rallies,
-    closed by landings, long pauses or the end of the stretch."""
+    closed by landings, shots into the net, long pauses or the end of the stretch.
+    `starts_video`: the stretch begins where the analysed video does (rather
+    than at a cut)."""
     seg_end = float(len(track.xy)) if seg_end is None else seg_end
+    net_contacts = net_contacts or {}
+    max_flight = RALLY_BREAK_SEC * fps
+    # Anything that ends a rally: the shuttle on the floor or in the net.
+    landings = sorted([*landings, *net_contacts])
+
+    def ending(last_hit: _Event, landing: float | None) -> float | None:
+        """The landing, if it can be how the rally ended (not dead time long after)."""
+        return landing if landing is not None and landing - last_hit.frame <= max_flight else None
+
     groups: list[tuple[list[_Event], float, float | None]] = []  # hits, window start, landing
     current: list[_Event] = []
     window_start = seg_start
@@ -325,34 +476,42 @@ def _assemble_rallies(
         # Close the rally at any landing that happens before this hit.
         while li < len(landings) and landings[li] < ev.frame:
             if current:
-                groups.append((current, window_start, landings[li]))
+                groups.append((current, window_start, ending(current[-1], landings[li])))
                 current = []
                 blocked_until = landings[li] + DEAD_TIME_SEC * fps
                 window_start = blocked_until
             li += 1
         if ev.frame < blocked_until:
             continue
-        if current and ev.frame - current[-1].frame > RALLY_BREAK_SEC * fps:
+        if current and ev.frame - current[-1].frame > max_flight:
             groups.append((current, window_start, None))
-            window_start = current[-1].frame + RALLY_BREAK_SEC * fps / 2
+            window_start = current[-1].frame + max_flight / 2
             current = []
         current.append(ev)
     if current:
-        groups.append((current, window_start, landings[li] if li < len(landings) else None))
+        landing = landings[li] if li < len(landings) else None
+        groups.append((current, window_start, ending(current[-1], landing)))
 
     rallies: list[Rally] = []
     for group, w_start, landing in groups:
         seq = _assign_hitters(group, fps)
+        net_point = net_contacts.get(landing) if landing is not None else None
         if landing is not None:
-            end, landed = landing, True
+            end, landed = landing, net_point is None
         else:
-            end, landed = _last_seen_after(track, seq[-1].frame, seg_end), False
+            # Not seen to land: the shuttle is last seen in flight, which can't
+            # last longer than a shot (it may be carried around in dead time).
+            last_seen = _last_seen_after(track, seq[-1].frame, seg_end)
+            end, landed = min(last_seen, seq[-1].frame + max_flight), False
         # A rally must end after its last hit. Trim inconsistent trailing hits
         # rather than discarding the whole rally.
         seq = [h for h in seq if h.frame < end]
         if seq:
-            served = _starts_with_serve(track, seq[0].frame, w_start, fps, px_scale)
-            rallies.append(Rally(seq, end, landed, served))
+            at_video_start = starts_video and w_start <= seg_start
+            served = _starts_with_serve(
+                track, seq[0].frame, w_start, fps, px_scale, at_video_start=at_video_start
+            )
+            rallies.append(Rally(seq, end, landed, served, net_point))
     return rallies
 
 
@@ -371,18 +530,28 @@ def _last_seen_after(track: ShuttleTrack, frame: float, limit: float | None = No
 
 
 def _starts_with_serve(
-    track: ShuttleTrack, first_hit: float, window_start: float, fps: float, px_scale: float
+    track: ShuttleTrack,
+    first_hit: float,
+    window_start: float,
+    fps: float,
+    px_scale: float,
+    *,
+    at_video_start: bool,
 ) -> bool:
     """Whether the rally was seen to start: no shuttle flying before its first hit.
 
     Looks back up to SERVE_LOOKBACK_SEC (not before the rally window: the start
-    of the clip, a cut or the end of the previous rally). Before a serve the
-    shuttle is in the server's hand, so it is either unseen or barely moving.
+    of the analysed video, a cut or the end of the previous rally). Before a
+    serve the shuttle is in the server's hand, so it is either unseen or barely
+    moving. `at_video_start`: the window opens where the analysed video (clip or
+    time window) begins, so a hit right there can't be called a serve. Not so
+    after a cut: highlight reels cut in just before the serve (0.2-0.35 s
+    before it in real footage), so there an unseen lead-in still counts.
     """
     lo = int(max(window_start, first_hit - SERVE_LOOKBACK_SEC * fps))
     hi = int(first_hit - 0.1 * fps)
-    if hi - lo < 0.25 * fps and window_start <= 0:
-        return False  # the clip starts right at this hit: can't tell
+    if hi - lo < 0.25 * fps and at_video_start:
+        return False  # the analysed video starts right at this hit: can't tell
     xy = track.xy[max(lo, 0) : max(hi, 0)]
     if len(xy) < 2:
         return True
